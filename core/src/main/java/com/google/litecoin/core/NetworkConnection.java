@@ -19,7 +19,7 @@ package com.google.litecoin.core;
 import java.io.IOException;
 
 /**
- * <p>A NetworkConnection handles talking to a remote Litecoin peer at a low level. It understands how to read and write
+ * <p>A NetworkConnection handles talking to a remote Bitcoin peer at a low level. It understands how to read and write
  * messages, but doesn't asynchronously communicate with the peer or handle the higher level details
  * of the protocol. A NetworkConnection is typically stateless, so after constructing a NetworkConnection, give it to a
  * newly created {@link Peer} to handle messages to and from that specific peer.</p>

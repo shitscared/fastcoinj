@@ -44,7 +44,7 @@ import static org.jboss.netty.channel.Channels.write;
 // TODO: Remove this class and refactor the way we build Netty pipelines.
 
 /**
- * <p>A {@code TCPNetworkConnection} is used for connecting to a Litecoin node over the standard TCP/IP protocol.<p>
+ * <p>A {@code TCPNetworkConnection} is used for connecting to a Bitcoin node over the standard TCP/IP protocol.<p>
  *
  * <p>{@link TCPNetworkConnection#getHandler()} is part of a Netty Pipeline, downstream of other pipeline stages.</p>
  *
@@ -152,7 +152,7 @@ public class TCPNetworkConnection implements NetworkConnection {
         // Now it's our turn ...
         // Send an ACK message stating we accept the peers protocol version.
         write(channel, new VersionAck());
-        // litecoinj is a client mode implementation. That means there's not much point in us talking to other client
+        // bitcoinj is a client mode implementation. That means there's not much point in us talking to other client
         // mode nodes because we can't download the data from them we need to find/verify transactions. Some bogus
         // implementations claim to have a block chain in their services field but then report a height of zero, filter
         // them out here.
@@ -194,7 +194,7 @@ public class TCPNetworkConnection implements NetworkConnection {
             // useful data in it. We need to know the peer protocol version before we can talk to it.
         }
 
-        // Attempt to decode a Litecoin message passing upstream in the channel.
+        // Attempt to decode a Bitcoin message passing upstream in the channel.
         //
         // By extending ReplayingDecoder, reading past the end of buffer will throw a special Error
         // causing the channel to read more and retry.
@@ -213,7 +213,7 @@ public class TCPNetworkConnection implements NetworkConnection {
             return message;
         }
 
-        /** Serialize outgoing Litecoin messages passing downstream in the channel. */
+        /** Serialize outgoing Bitcoin messages passing downstream in the channel. */
         public void handleDownstream(ChannelHandlerContext ctx, ChannelEvent evt) throws Exception {
             if (!(evt instanceof MessageEvent)) {
                 ctx.sendDownstream(evt);
@@ -233,7 +233,7 @@ public class TCPNetworkConnection implements NetworkConnection {
         }
     }
     
-    /** Returns the Netty Pipeline stage handling Litecoin serialization for this connection. */
+    /** Returns the Netty Pipeline stage handling Bitcoin serialization for this connection. */
     public NetworkHandler getHandler() {
         return handler;
     }

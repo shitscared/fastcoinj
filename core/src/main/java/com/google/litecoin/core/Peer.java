@@ -41,9 +41,9 @@ import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 
 /**
- * A Peer handles the high level communication with a Litecoin node.
+ * A Peer handles the high level communication with a Bitcoin node.
  *
- * <p>{@link Peer#getHandler()} is part of a Netty Pipeline with a Litecoin serializer downstream of it.
+ * <p>{@link Peer#getHandler()} is part of a Netty Pipeline with a Bitcoin serializer downstream of it.
  */
 public class Peer {
     interface PeerLifecycleListener {
@@ -112,7 +112,7 @@ public class Peer {
         Sha256Hash hash;
         SettableFuture future;
         // If the peer does not support the notfound message, we'll use ping/pong messages to simulate it. This is
-        // a nasty hack that relies on the fact that litecoin-qt is single threaded and processes messages in order.
+        // a nasty hack that relies on the fact that bitcoin-qt is single threaded and processes messages in order.
         // The nonce field records which pong should clear this request as "not found".
         long nonce;
     }
@@ -230,7 +230,7 @@ public class Peer {
             e.getChannel().close();
         }
 
-        /** Handle incoming Litecoin messages */
+        /** Handle incoming Bitcoin messages */
         @Override
         public void messageReceived(ChannelHandlerContext ctx, MessageEvent e) throws Exception {
             Message m = (Message)e.getMessage();
@@ -242,81 +242,69 @@ public class Peer {
         }
     }
 
-  private void processMessage(MessageEvent e, Message m) throws IOException, VerificationException, ProtocolException {
-        try {
-            // Allow event listeners to filter the message stream. Listeners are allowed to drop messages by
-            // returning null.
-            for (PeerEventListener listener : eventListeners) {
-                m = listener.onPreMessageReceived(this, m);
-                if (m == null) break;
-            }
-            if (m == null) return;
+    private void processMessage(MessageEvent e, Message m) throws IOException, VerificationException, ProtocolException {
+        // Allow event listeners to filter the message stream. Listeners are allowed to drop messages by
+        // returning null.
+        for (PeerEventListener listener : eventListeners) {
+            m = listener.onPreMessageReceived(this, m);
+            if (m == null) break;
+        }
+        if (m == null) return;
 
-            // If we are in the middle of receiving transactions as part of a filtered block push from the remote node,
-            // and we receive something that's not a transaction, then we're done.
-            if (currentFilteredBlock != null && !(m instanceof Transaction)) {
-                endFilteredBlock(currentFilteredBlock);
-                currentFilteredBlock = null;
-            }
+        // If we are in the middle of receiving transactions as part of a filtered block push from the remote node,
+        // and we receive something that's not a transaction, then we're done.
+        if (currentFilteredBlock != null && !(m instanceof Transaction)) {
+            endFilteredBlock(currentFilteredBlock);
+            currentFilteredBlock = null;
+        }
 
-            if (m instanceof NotFoundMessage) {
-                // This is sent to us when we did a getdata on some transactions that aren't in the peers memory pool.
-                // Because NotFoundMessage is a subclass of InventoryMessage, the test for it must come before the next.
-                processNotFoundMessage((NotFoundMessage) m);
-            } else if (m instanceof InventoryMessage) {
-                processInv((InventoryMessage) m);
-            } else if (m instanceof Block) {
-                processBlock((Block) m);
-            } else if (m instanceof FilteredBlock) {
-                startFilteredBlock((FilteredBlock) m);
-            } else if (m instanceof Transaction) {
-                processTransaction((Transaction) m);
-            } else if (m instanceof GetDataMessage) {
-                processGetData((GetDataMessage) m);
-            } else if (m instanceof AddressMessage) {
-                // We don't care about addresses of the network right now. But in future,
-                // we should save them in the wallet so we don't put too much load on the seed nodes and can
-                // properly explore the network.
-            } else if (m instanceof HeadersMessage) {
-                processHeaders((HeadersMessage) m);
-            } else if (m instanceof AlertMessage) {
-                processAlert((AlertMessage) m);
-            } else if (m instanceof VersionMessage) {
-                vPeerVersionMessage = (VersionMessage) m;
-                for (PeerLifecycleListener listener : lifecycleListeners)
-                    listener.onPeerConnected(this);
-                final int version = vMinProtocolVersion;
-                if (vPeerVersionMessage.clientVersion < version) {
-                    log.warn("Connected to a peer speaking protocol version {} but need {}, closing",
-                            vPeerVersionMessage.clientVersion, version);
-                    e.getChannel().close();
-                }
-            } else if (m instanceof VersionAck) {
-                if (vPeerVersionMessage == null) {
-                    throw new ProtocolException("got a version ack before version");
-                }
-                if (isAcked) {
-                    throw new ProtocolException("got more than one version ack");
-                }
-                isAcked = true;
-            } else if (m instanceof Ping) {
-                if (((Ping) m).hasNonce())
-                    sendMessage(new Pong(((Ping) m).getNonce()));
-            } else if (m instanceof Pong) {
-                processPong((Pong)m);
-            } else {
-                log.warn("Received unhandled message: {}", m);
+        if (m instanceof NotFoundMessage) {
+            // This is sent to us when we did a getdata on some transactions that aren't in the peers memory pool.
+            // Because NotFoundMessage is a subclass of InventoryMessage, the test for it must come before the next.
+            processNotFoundMessage((NotFoundMessage) m);
+        } else if (m instanceof InventoryMessage) {
+            processInv((InventoryMessage) m);
+        } else if (m instanceof Block) {
+            processBlock((Block) m);
+        } else if (m instanceof FilteredBlock) {
+            startFilteredBlock((FilteredBlock) m);
+        } else if (m instanceof Transaction) {
+            processTransaction((Transaction) m);
+        } else if (m instanceof GetDataMessage) {
+            processGetData((GetDataMessage) m);
+        } else if (m instanceof AddressMessage) {
+            // We don't care about addresses of the network right now. But in future,
+            // we should save them in the wallet so we don't put too much load on the seed nodes and can
+            // properly explore the network.
+        } else if (m instanceof HeadersMessage) {
+            processHeaders((HeadersMessage) m);
+        } else if (m instanceof AlertMessage) {
+            processAlert((AlertMessage) m);
+        } else if (m instanceof VersionMessage) {
+            vPeerVersionMessage = (VersionMessage) m;
+            for (PeerLifecycleListener listener : lifecycleListeners)
+                listener.onPeerConnected(this);
+            final int version = vMinProtocolVersion;
+            if (vPeerVersionMessage.clientVersion < version) {
+                log.warn("Connected to a peer speaking protocol version {} but need {}, closing",
+                        vPeerVersionMessage.clientVersion, version);
+                e.getChannel().close();
             }
-        } catch (Throwable throwable) {
-            log.warn("Caught exception in peer thread: {}", throwable.getMessage());
-            throwable.printStackTrace();
-            for (PeerEventListener listener : eventListeners) {
-                try {
-                    listener.onException(throwable);
-                } catch (Exception e1) {
-                    e1.printStackTrace();
-                }
+        } else if (m instanceof VersionAck) {
+            if (vPeerVersionMessage == null) {
+                throw new ProtocolException("got a version ack before version");
             }
+            if (isAcked) {
+                throw new ProtocolException("got more than one version ack");
+            }
+            isAcked = true;
+        } else if (m instanceof Ping) {
+            if (((Ping) m).hasNonce())
+                sendMessage(new Pong(((Ping) m).getNonce()));
+        } else if (m instanceof Pong) {
+            processPong((Pong)m);
+        } else {
+            log.warn("Received unhandled message: {}", m);
         }
     }
 
@@ -369,7 +357,7 @@ public class Peer {
         }
     }
 
-    /** Returns the Netty Pipeline stage handling the high level Litecoin protocol. */
+    /** Returns the Netty Pipeline stage handling the high level Bitcoin protocol. */
     public PeerHandler getHandler() {
         return handler;
     }
@@ -1064,7 +1052,7 @@ public class Peer {
             List<Sha256Hash> blockLocator = new ArrayList<Sha256Hash>(51);
             // For now we don't do the exponential thinning as suggested here:
             //
-            //   https://en.litecoin.it/wiki/Protocol_specification#getblocks
+            //   https://en.bitcoin.it/wiki/Protocol_specification#getblocks
             //
             // This is because it requires scanning all the block chain headers, which is very slow. Instead we add the top
             // 50 block headers. If there is a re-org deeper than that, we'll end up downloading the entire chain. We

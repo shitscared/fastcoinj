@@ -21,7 +21,7 @@ import java.util.Arrays;
 import static com.google.common.base.Preconditions.checkArgument;
 
 /**
- * <p>In Litecoin the following format is often used to represent some type of key:</p>
+ * <p>In Bitcoin the following format is often used to represent some type of key:</p>
  * <p/>
  * <pre>[one version byte] [data bytes] [4 checksum bytes]</pre>
  * <p/>

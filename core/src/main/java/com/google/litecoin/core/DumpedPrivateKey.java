@@ -23,7 +23,7 @@ import java.math.BigInteger;
 import java.util.Arrays;
 
 /**
- * Parses and generates private keys in the form used by the Litecoin "dumpprivkey" command. This is the private key
+ * Parses and generates private keys in the form used by the Bitcoin "dumpprivkey" command. This is the private key
  * bytes with a header byte and 4 checksum bytes at the end. If there are 33 private key bytes instead of 32, then
  * the last byte is a discriminator value for the compressed pubkey.
  */
@@ -32,11 +32,7 @@ public class DumpedPrivateKey extends VersionedChecksummedBytes {
 
     // Used by ECKey.getPrivateKeyEncoded()
     DumpedPrivateKey(NetworkParameters params, byte[] keyBytes, boolean compressed) {
-        //super(params.dumpedPrivateKeyHeader, encode(keyBytes, compressed));
-        // Fixing private key export
-        // Thanks to d4n13 for this!
-        super(params.dumpedPrivateKeyHeader + params.addressHeader, encode(keyBytes, compressed));
-
+        super(params.dumpedPrivateKeyHeader, encode(keyBytes, compressed));
         this.compressed = compressed;
     }
 
@@ -54,7 +50,7 @@ public class DumpedPrivateKey extends VersionedChecksummedBytes {
     }
 
     /**
-     * Parses the given private key as created by the "dumpprivkey" Litecoin C++ RPC.
+     * Parses the given private key as created by the "dumpprivkey" Bitcoin C++ RPC.
      *
      * @param params  The expected network parameters of the key. If you don't care, provide null.
      * @param encoded The base58 encoded string.

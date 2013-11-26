@@ -83,7 +83,7 @@ public abstract class AbstractBlockChain {
     /**
      * Tracks the top of the best known chain.<p>
      *
-     * Following this one down to the genesis block produces the story of the economy from the creation of Litecoin
+     * Following this one down to the genesis block produces the story of the economy from the creation of Bitcoin
      * until the present day. The chain head can change if a new set of blocks is received that results in a chain of
      * greater work than the one obtained by following this one down. In that case a reorganize is triggered,
      * potentially invalidating transactions in our wallet.
@@ -328,7 +328,7 @@ public abstract class AbstractBlockChain {
             // Prove the block is internally valid: hash is lower than target, etc. This only checks the block contents
             // if there is a tx sending or receiving coins using an address in one of our wallets. And those transactions
             // are only lightly verified: presence in a valid connecting block is taken as proof of validity. See the
-            // article here for more details: http://code.google.com/p/litecoinj/wiki/SecurityModel
+            // article here for more details: http://code.google.com/p/bitcoinj/wiki/SecurityModel
             try {
                 block.verifyHeader();
                 if (contentsImportant)
@@ -746,14 +746,30 @@ public abstract class AbstractBlockChain {
         if (elapsed > 50)
             log.info("Difficulty transition traversal took {}msec", elapsed);
 
-	// Check if our cursor is null.  If it is, we've used checkpoints to restore.
-	if(cursor == null) return;
-
         Block blockIntervalAgo = cursor.getHeader();
         int timespan = (int) (prev.getTimeSeconds() - blockIntervalAgo.getTimeSeconds());
         // Limit the adjustment step.
-        if (timespan < params.targetTimespan / 4)
-            timespan = params.targetTimespan / 4;
+
+        int pindex = cursor.getHeight();
+        //int pindex = storedPrev.getHeight();
+        if ((pindex+1) < 1250)
+        {
+            if (timespan < params.targetTimespan/32)
+                timespan = params.targetTimespan/32;
+        }
+        else if ((pindex+1) < 4000)
+        {
+            if (timespan < params.targetTimespan/8)
+                timespan = params.targetTimespan/8;
+        }
+        else
+        {
+            if (timespan < params.targetTimespan/4)
+                timespan = params.targetTimespan/4;
+        }
+
+  //      if (timespan < params.targetTimespan / 32)
+  //          timespan = params.targetTimespan / 32;
         if (timespan > params.targetTimespan * 4)
             timespan = params.targetTimespan * 4;
 
@@ -784,7 +800,7 @@ public abstract class AbstractBlockChain {
         // and then leaving, making it too hard to mine a block. On non-difficulty transition points, easy
         // blocks are allowed if there has been a span of 20 minutes without one.
         final long timeDelta = next.getTimeSeconds() - prev.getTimeSeconds();
-        // There is an integer underflow bug in litecoin-qt that means mindiff blocks are accepted when time
+        // There is an integer underflow bug in bitcoin-qt that means mindiff blocks are accepted when time
         // goes backwards.
         if (timeDelta >= 0 && timeDelta <= NetworkParameters.TARGET_SPACING * 2) {
             // Walk backwards until we find a block that doesn't have the easiest proof of work, then check

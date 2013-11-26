@@ -24,7 +24,7 @@ import com.google.litecoin.core.StoredBlock;
  * different ways. An in-memory implementation (MemoryBlockStore) exists for unit testing but real apps will want to
  * use implementations that save to disk.<p>
  *
- * A BlockStore is a map of hashes to StoredBlock. The hash is the double digest of the Litecoin serialization
+ * A BlockStore is a map of hashes to StoredBlock. The hash is the double digest of the BitCoin serialization
  * of the block header, <b>not</b> the header with the extra data as well.<p>
  *
  * BlockStores are thread safe.

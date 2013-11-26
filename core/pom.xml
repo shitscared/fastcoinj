@@ -21,15 +21,15 @@
     <modelVersion>4.0.0</modelVersion>
     <parent>
         <groupId>com.google</groupId>
-        <artifactId>litecoinj-parent</artifactId>
-        <version>0.82-SNAPSHOT</version>
+        <artifactId>bitcoinj-parent</artifactId>
+        <version>0.8-SNAPSHOT</version>
     </parent>
 
     <groupId>com.google</groupId>
     <artifactId>litecoinj</artifactId>
 
     <name>litecoinj</name>
-    <description>A Java Litecoin library</description>
+    <description>A Java Bitcoin library</description>
 
     <profiles>
         <profile>
@@ -121,7 +121,7 @@
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
         </dependency>
-        <!-- litecoinj consumers are expected to provide their own SLF4J adapters
+        <!-- bitcoinj consumers are expected to provide their own SLF4J adapters
              such as logback, slf4j-log4j12, slf4j-jcl and so on
              see http://www.slf4j.org/faq.html -->
         <dependency>
@@ -137,11 +137,11 @@
             <optional>true</optional>
         </dependency>
 
-	    <dependency>
-	        <groupId>io.netty</groupId>
-	        <artifactId>netty</artifactId>
-	        <version>3.6.3.Final</version>
-	    </dependency>
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty</artifactId>
+            <version>3.6.3.Final</version>
+        </dependency>
 
         <dependency>
             <groupId>com.madgag</groupId>
@@ -172,9 +172,9 @@
         </dependency>
 
         <dependency>
-          <groupId>com.lambdaworks</groupId>
-          <artifactId>scrypt</artifactId>
-          <version>1.3.3</version>
+            <groupId>com.lambdaworks</groupId>
+            <artifactId>scrypt</artifactId>
+            <version>1.3.3</version>
         </dependency>
     </dependencies>
 

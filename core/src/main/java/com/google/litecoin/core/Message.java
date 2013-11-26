@@ -26,7 +26,7 @@ import java.util.Arrays;
 import static com.google.common.base.Preconditions.checkState;
 
 /**
- * <p>A Message is a data structure that can be serialized/deserialized using both the Litecoin proprietary serialization
+ * <p>A Message is a data structure that can be serialized/deserialized using both the Bitcoin proprietary serialization
  * format and built-in Java object serialization. Specific types of messages that are used both in the block chain,
  * and on the wire, are derived from this class.</p>
  */
@@ -87,9 +87,9 @@ public abstract class Message implements Serializable {
     /**
      * 
      * @param params NetworkParameters object.
-     * @param msg Litecoin protocol formatted byte array containing message content.
+     * @param msg Bitcoin protocol formatted byte array containing message content.
      * @param offset The location of the first msg byte within the array.
-     * @param protocolVersion Litecoin protocol version.
+     * @param protocolVersion Bitcoin protocol version.
      * @param parseLazy Whether to perform a full parse immediately or delay until a read is requested.
      * @param parseRetain Whether to retain the backing byte array for quick reserialization.  
      * If true and the backing byte array is invalidated due to modification of a field then 
@@ -150,7 +150,7 @@ public abstract class Message implements Serializable {
         this(params, msg, offset, NetworkParameters.PROTOCOL_VERSION, parseLazy, parseRetain, length);
     }
 
-    // These methods handle the serialization/deserialization using the custom Litecoin protocol.
+    // These methods handle the serialization/deserialization using the custom Bitcoin protocol.
     // It's somewhat painful to work with in Java, so some of these objects support a second 
     // serialization mechanism - the standard Java serialization system. This is used when things 
     // are serialized to the wallet.
@@ -290,7 +290,7 @@ public abstract class Message implements Serializable {
     }
 
     /**
-     * Serialize this message to a byte array that conforms to the litecoin wire protocol.
+     * Serialize this message to a byte array that conforms to the bitcoin wire protocol.
      * <br/>
      * This method may return the original byte array used to construct this message if the
      * following conditions are met:
@@ -353,7 +353,7 @@ public abstract class Message implements Serializable {
     }
 
     /**
-     * Serialize this message to the provided OutputStream using the litecoin wire format.
+     * Serialize this message to the provided OutputStream using the bitcoin wire format.
      *
      * @param stream
      * @throws IOException
