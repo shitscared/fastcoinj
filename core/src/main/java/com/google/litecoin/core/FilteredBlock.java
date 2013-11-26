@@ -41,7 +41,7 @@ public class FilteredBlock extends Message {
         super(params, payloadBytes, 0);
     }
     
-    public void litecoinSerializeToStream(OutputStream stream) throws IOException {
+    public void bitcoinSerializeToStream(OutputStream stream) throws IOException {
         throw new RuntimeException("Not implemented");
     }
 

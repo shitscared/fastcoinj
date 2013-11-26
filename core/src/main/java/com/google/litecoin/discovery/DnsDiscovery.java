@@ -52,9 +52,15 @@ public class DnsDiscovery implements PeerDiscovery {
     private NetworkParameters netParams;
 
     public static final String[] defaultHosts = new String[]{
-            "dnsseed.litecoinpool.org",
-            "dnsseed.bytesized-vps.com",
-            "dnsseed.ltc.xurious.com",
+            /* {"u2.fastcoin.ca","a2.fastcoin.ca"},
+ +    {"u2.fastcoin.ws","u2.fastcoin.ws"},
+ +    {"a1.fastcoinfor.me","u1.fastcoinfor.me"},
+ +    {"a1.fastcoin.ca","u1.fastcoin.ca"},
+ +    {"a1.fastcoin.ws","u1.fastcoin.ws"},*/
+      "fastcoinfor.me","u1.fastcoinfor.me",
+      "fastcoin.ws","u1.fastcoin.ws",
+      "fastcoinfor.me","a1.fastcoinfor.me",
+      "fastcoin.ws","a1.fastcoin.ws",
     };
 
     /**

@@ -29,9 +29,9 @@ import static com.google.litecoin.core.Utils.COIN;
 import static com.google.common.base.Preconditions.checkState;
 
 /**
- * <p>NetworkParameters contains the data needed for working with an instantiation of a Litecoin chain.</p>
+ * <p>NetworkParameters contains the data needed for working with an instantiation of a Bitcoin chain.</p>
  *
- * Currently there are only two, the production chain and the test chain. But in future as Litecoin
+ * Currently there are only two, the production chain and the test chain. But in future as Bitcoin
  * evolves there may be more. You can create your own as long as they don't conflict.
  */
 public class NetworkParameters implements Serializable {
@@ -48,9 +48,13 @@ public class NetworkParameters implements Serializable {
     public static final byte[] SATOSHI_KEY = Hex.decode("04fc9702847840aaf195de8442ebecedf5b095cdbb9bc716bda9110971b28a49e0ead8564ff0db22209e0374782c093bb899692d524e9d6a6956e7c5ecbcd68284");
 
     /** The string returned by getId() for the main, production network where people trade things. */
-    public static final String ID_PRODNET = "org.litecoin.production";
+    public static final String ID_PRODNET = "org.bitcoin.production";
+
+    /** The string returned by getId() for the main, production network where people trade things. */
+    public static final String ID_MAINNET = "org.bitcoin.production";
+
     /** The string returned by getId() for the testnet. */
-    public static final String ID_TESTNET = "org.litecoin.test";
+    public static final String ID_TESTNET = "org.bitcoin.test";
     /** Unit test network. */
     static final String ID_UNITTESTNET = "com.google.litecoin.unittest";
 
@@ -61,7 +65,7 @@ public class NetworkParameters implements Serializable {
     /**
      * <p>Genesis block for this chain.</p>
      *
-     * <p>The first block in every chain is a well known constant shared between all Litecoin implemenetations. For a
+     * <p>The first block in every chain is a well known constant shared between all Bitcoin implemenetations. For a
      * block to be valid, it must be eventually possible to work backwards to the genesis block by following the
      * prevBlockHash pointers in the block headers.</p>
      *
@@ -84,12 +88,12 @@ public class NetworkParameters implements Serializable {
     public final int addressHeader;
     /** First byte of a base58 encoded dumped private key. See {@link DumpedPrivateKey}. */
     public final int dumpedPrivateKeyHeader;
-    /** How many blocks pass between difficulty adjustment periods. Litecoin standardises this to be 2015. */
+    /** How many blocks pass between difficulty adjustment periods. Bitcoin standardises this to be 2015. */
     public /*final*/ int interval;
     /**
      * How much time in seconds is supposed to pass between "interval" blocks. If the actual elapsed time is
      * significantly different from this value, the network difficulty formula will produce a different value. Both
-     * test and production Litecoin networks use 2 weeks (1209600 seconds).
+     * test and production Bitcoin networks use 2 weeks (1209600 seconds).
      */
     public final int targetTimespan;
     /**
@@ -136,29 +140,31 @@ public class NetworkParameters implements Serializable {
 
     private NetworkParameters(int type) {
         alertSigningKey = SATOSHI_KEY;
-        if (type == 0 || type == 100) {
+     //   if (type == 0) {
             // Production.
             genesisBlock = createGenesis(this);
             interval = INTERVAL;
             targetTimespan = TARGET_TIMESPAN;
             proofOfWorkLimit = Utils.decodeCompactBits(0x1e0fffffL);
-            acceptableAddressCodes = new int[] { 48 };
+            acceptableAddressCodes = new int[] { 96 };  //48
             dumpedPrivateKeyHeader = 128;
-            addressHeader = 48;
-            if(type == 100) port = 10333;
-            else port = 9333;
+            addressHeader = 96; //48
+            port = 9526;//9333;
             packetMagic = 0xfbc0b6db;
             genesisBlock.setDifficultyTarget(0x1e0ffff0L);
-            genesisBlock.setTime(1317972665L);
-            genesisBlock.setNonce(2084524493L);
-            genesisBlock.setMerkleRoot(new Sha256Hash("97ddfbbae6be97fd6cdf3e7ca13232a3afff2353e29badfab7f73011edd4ced9"));
+            genesisBlock.setTime(1369761817L);    //1317972665L);
+            genesisBlock.setNonce(128181112L);//2084524493L);
+            genesisBlock.setMerkleRoot(new Sha256Hash("ba3827aaf56440074e5436db36421d3a38645bc0f1a7c378a48b7daf3c078256"));
+                                                    //"97ddfbbae6be97fd6cdf3e7ca13232a3afff2353e29badfab7f73011edd4ced9"));
             id = ID_PRODNET;
-            subsidyDecreaseBlockCount = 840000;
+            subsidyDecreaseBlockCount = 2592000;//840000;
             allowEmptyPeerChains = false;
-            spendableCoinbaseDepth = 100;
+            spendableCoinbaseDepth = 60;
             String genesisHash = genesisBlock.getHashAsString();
-            checkState(genesisHash.equals("12a765e31ffd4059bada1e25190f6e98c99d9714d334efa41a195a7e7e04bfe2"),
-                    genesisHash);
+            checkState(genesisHash.equals("ecba185817b726ef62e53afb14241a8095bd9613d2d3df679911029b83c98e5b"),
+                    genesisHash); //      "12a765e31ffd4059bada1e25190f6e98c99d9714d334efa41a195a7e7e04bfe2"),
+
+                                            /*
 
             // This contains (at a minimum) the blocks which are not BIP30 compliant. BIP30 changed how duplicate
             // transactions are handled. Duplicated transactions could occur in the case where a coinbase had the same
@@ -178,7 +184,7 @@ public class NetworkParameters implements Serializable {
             interval = INTERVAL;
             targetTimespan = TARGET_TIMESPAN;
             proofOfWorkLimit = Utils.decodeCompactBits(0x1d00ffffL);
-            port = 19333;
+            port = 19526;
             addressHeader = 111;
             acceptableAddressCodes = new int[] { 111 };
             dumpedPrivateKeyHeader = 239;
@@ -230,7 +236,7 @@ public class NetworkParameters implements Serializable {
             subsidyDecreaseBlockCount = 100;
         } else {
             throw new RuntimeException();
-        }
+        }                                     */
     }
 
     private static Block createGenesis(NetworkParameters n) {
@@ -247,7 +253,7 @@ public class NetworkParameters implements Serializable {
             Script.writeBytes(scriptPubKeyBytes, Hex.decode
                     ("41044870341873accab7600d65e204bb4ae47c43d20c562ebfbf70cbcb188da98dec8b5ccf0526c8e4d954c6b47b898cc30adf1ff77c2e518ddc9785b87ccb90b8cdac"));
             scriptPubKeyBytes.write(Script.OP_CHECKSIG);
-            t.addOutput(new TransactionOutput(n, t, Utils.toNanoCoins(50, 0), scriptPubKeyBytes.toByteArray()));
+            t.addOutput(new TransactionOutput(n, t, Utils.toNanoCoins(32, 0), scriptPubKeyBytes.toByteArray()));//50
         } catch (Exception e) {
             // Cannot happen.
             throw new RuntimeException(e);
@@ -270,7 +276,7 @@ public class NetworkParameters implements Serializable {
             Script.writeBytes(scriptPubKeyBytes, Hex.decode
                     ("04678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5f"));
             scriptPubKeyBytes.write(Script.OP_CHECKSIG);
-            t.addOutput(new TransactionOutput(n, t, Utils.toNanoCoins(50, 0), scriptPubKeyBytes.toByteArray()));
+            t.addOutput(new TransactionOutput(n, t, Utils.toNanoCoins(32, 0), scriptPubKeyBytes.toByteArray()));
         } catch (Exception e) {
             // Cannot happen.
             throw new RuntimeException(e);
@@ -279,8 +285,8 @@ public class NetworkParameters implements Serializable {
         return genesisBlock;
     }
 
-    public static final int TARGET_TIMESPAN = (int)(3.5 * 24 * 60 * 60);  // 3.5 days per difficulty cycle, on average.
-    public static final int TARGET_SPACING = (int)(2.5 * 60);  // 2.5 minutes per block.
+    public static final int TARGET_TIMESPAN = (int)(60 * 60);  ///(3.5 * 24 * 60 * 60);  // 3.5 days per difficulty cycle, on average.
+    public static final int TARGET_SPACING = (int)(12);  //(2.5 * 60) // 2.5 minutes per block.
     public static final int INTERVAL = TARGET_TIMESPAN / TARGET_SPACING;
     
     /**
@@ -293,7 +299,7 @@ public class NetworkParameters implements Serializable {
     /**
      * The maximum money to be generated
      */
-    public static final BigInteger MAX_MONEY = new BigInteger("84000000", 10).multiply(COIN);
+    public static final BigInteger MAX_MONEY = new BigInteger("166000000", 10).multiply(COIN); //84000000
 
     /** Returns whatever the latest testNet parameters are.  Use this rather than the versioned equivalents. */
     public static NetworkParameters testNet() {
@@ -317,21 +323,12 @@ public class NetworkParameters implements Serializable {
     }
 
     private static NetworkParameters pn;
-    /** The primary Litecoin chain created by Satoshi. */
+    /** The primary Bitcoin chain created by Satoshi. */
     public synchronized static NetworkParameters prodNet() {
         if (pn == null) {
             pn = new NetworkParameters(0);
         }
         return pn;
-    }
-
-    private static NetworkParameters pnh;
-    /** The primary Litecoin chain created by Hank. */
-    public synchronized static NetworkParameters prodNetHank() {
-        if (pnh == null) {
-            pnh = new NetworkParameters(100);
-        }
-        return pnh;
     }
 
     private static NetworkParameters ut;
@@ -383,6 +380,7 @@ public class NetworkParameters implements Serializable {
      * Returns true if the block height is either not a checkpoint, or is a checkpoint and the hash matches.
      */
     public boolean passesCheckpoint(int height, Sha256Hash hash) {
+     // System.out.println("->"+height);
         Sha256Hash checkpointHash = checkpoints.get(height);
         return checkpointHash == null || checkpointHash.equals(hash);
     }

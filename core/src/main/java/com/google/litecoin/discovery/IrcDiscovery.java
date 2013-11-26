@@ -46,7 +46,7 @@ public class IrcDiscovery implements PeerDiscovery {
      * Finds a list of peers by connecting to an IRC network, joining a channel, decoding the nicks and then
      * disconnecting.
      *
-     * @param channel The IRC channel to join, either "#litecoin" or "#litecoinTEST3" for the production and test networks
+     * @param channel The IRC channel to join, either "#bitcoin" or "#bitcoinTEST3" for the production and test networks
      *                respectively.
      */
     public IrcDiscovery(String channel) {
@@ -58,7 +58,7 @@ public class IrcDiscovery implements PeerDiscovery {
      * disconnecting.
      *
      * @param server  Name or textual IP address of the IRC server to join.
-     * @param channel The IRC channel to join, either "#litecoin" or "#litecoinTEST3" for the production and test networks
+     * @param channel The IRC channel to join, either "#bitcoin" or "#bitcoinTEST3" for the production and test networks
      */
     public IrcDiscovery(String channel, String server, int port) {
         this.channel = channel;
@@ -118,7 +118,7 @@ public class IrcDiscovery implements PeerDiscovery {
             reader = new BufferedReader(new InputStreamReader(connection.getInputStream(), "UTF-8"));
 
             // Generate a random nick for the connection. This is chosen to be clearly identifiable as coming from
-            // litecoinj but not match the standard nick format, so full peers don't try and connect to us.
+            // bitcoinj but not match the standard nick format, so full peers don't try and connect to us.
             String nickRnd = String.format("bcj%d", new Random().nextInt(Integer.MAX_VALUE));
             String command = "NICK " + nickRnd;
             logAndSend(command);
@@ -192,7 +192,7 @@ public class IrcDiscovery implements PeerDiscovery {
     static ArrayList<InetSocketAddress> parseUserList(String[] userNames) throws UnknownHostException {
         ArrayList<InetSocketAddress> addresses = new ArrayList<InetSocketAddress>();
         for (String user : userNames) {
-            // All Litecoin peers start their nicknames with a 'u' character.
+            // All BitCoin peers start their nicknames with a 'u' character.
             if (!user.startsWith("u")) {
                 continue;
             }
@@ -203,7 +203,7 @@ public class IrcDiscovery implements PeerDiscovery {
             byte[] addressBytes;
             try {
                 // Strip off the "u" before decoding. Note that it's possible for anyone to join these IRC channels and
-                // so simply beginning with "u" does not imply this is a valid Litecoin encoded address.
+                // so simply beginning with "u" does not imply this is a valid BitCoin encoded address.
                 //
                 // decodeChecked removes the checksum from the returned bytes.
                 addressBytes = Base58.decodeChecked(user.substring(1));

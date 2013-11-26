@@ -30,7 +30,6 @@ import com.google.common.base.Objects;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
-import com.google.common.primitives.Ints;
 import com.google.common.util.concurrent.ListenableFuture;
 
 import org.slf4j.Logger;
@@ -61,16 +60,16 @@ import static com.google.common.base.Preconditions.*;
 /**
  * <p>A Wallet stores keys and a record of transactions that send and receive value from those keys. Using these,
  * it is able to create new transactions that spend the recorded transactions, and this is the fundamental operation
- * of the Litecoin protocol.</p>
+ * of the Bitcoin protocol.</p>
  *
- * <p>To learn more about this class, read <b><a href="http://code.google.com/p/litecoinj/wiki/WorkingWithTheWallet">
+ * <p>To learn more about this class, read <b><a href="http://code.google.com/p/bitcoinj/wiki/WorkingWithTheWallet">
  *     working with the wallet.</a></b></p>
  *
  * <p>To fill up a Wallet with transactions, you need to use it in combination with a {@link BlockChain} and various
- * other objects, see the <a href="http://code.google.com/p/litecoinj/wiki/GettingStarted">Getting started</a> tutorial
+ * other objects, see the <a href="http://code.google.com/p/bitcoinj/wiki/GettingStarted">Getting started</a> tutorial
  * on the website to learn more about how to set everything up.</p>
  *
- * <p>Wallets can be serialized using either Java serialization - this is not compatible across versions of litecoinj,
+ * <p>Wallets can be serialized using either Java serialization - this is not compatible across versions of bitcoinj,
  * or protocol buffer serialization. You need to save the wallet whenever it changes, there is an auto-save feature
  * that simplifies this for you although you're still responsible for manually triggering a save when your app is about
  * to quit because the auto-save feature waits a moment before actually committing to disk to avoid IO thrashing when
@@ -139,7 +138,7 @@ public class Wallet implements Serializable, BlockChainListener {
      * may have unspent "change" outputs.<p>
      * <p/>
      * Note: for now we will not allow spends of transactions that did not make it into the block chain. The code
-     * that handles this in Litecoin C++ is complicated. Satoshis code will not allow you to spend unconfirmed coins,
+     * that handles this in Bitcoin C++ is complicated. Satoshis code will not allow you to spend unconfirmed coins,
      * however, it does seem to support dependency resolution entirely within the context of the memory pool so
      * theoretically you could spend zero-conf coins and all of them would be included together. To simplify we'll
      * make people wait but it would be a good improvement to resolve this in future.
@@ -1110,6 +1109,8 @@ public class Wallet implements Serializable, BlockChainListener {
             }
         }
 
+        log.info("Balance is now: " + litecoinValueToFriendlyString(getBalance()));
+
         // WARNING: The code beyond this point can trigger event listeners on transaction confidence objects, which are
         // in turn allowed to re-enter the Wallet. This means we cannot assume anything about the state of the wallet
         // from now on. The balance just received may already be spent.
@@ -1125,9 +1126,6 @@ public class Wallet implements Serializable, BlockChainListener {
                 ignoreNextNewBlock.add(txHash);
             }
         }
-	// Implements revision d64f55589694
-        BigInteger newBalance = getBalance();
-        log.info("Balance is now: " + litecoinValueToFriendlyString(getBalance()));
 
         // Inform anyone interested that we have received or sent coins but only if:
         //  - This is not due to a re-org.
@@ -1140,6 +1138,7 @@ public class Wallet implements Serializable, BlockChainListener {
         // TODO: Decide whether to run the event listeners, if a tx confidence listener already modified the wallet.
         boolean wasPending = wtx != null;
         if (!reorg && bestChain && !wasPending) {
+            BigInteger newBalance = getBalance();
             int diff = valueDifference.compareTo(BigInteger.ZERO);
             // We pick one callback based on the value difference, though a tx can of course both send and receive
             // coins from the wallet.
@@ -1707,7 +1706,7 @@ public class Wallet implements Serializable, BlockChainListener {
 
     /** A SendResult is returned to you as part of sending coins to a recipient. */
     public static class SendResult {
-        /** The Litecoin transaction message that moves the money. */
+        /** The Bitcoin transaction message that moves the money. */
         public Transaction tx;
         /** A future that will complete once the tx message has been successfully broadcast to the network. */
         public ListenableFuture<Transaction> broadcastComplete;
@@ -1737,9 +1736,9 @@ public class Wallet implements Serializable, BlockChainListener {
         /**
          * A transaction can have a fee attached, which is defined as the difference between the input values
          * and output values. Any value taken in that is not provided to an output can be claimed by a miner. This
-         * is how mining is incentivized in later years of the Litecoin system when inflation drops. It also provides
+         * is how mining is incentivized in later years of the Bitcoin system when inflation drops. It also provides
          * a way for people to prioritize their transactions over others and is used as a way to make denial of service
-         * attacks expensive. Some transactions require a fee due to their structure - currently litecoinj does not
+         * attacks expensive. Some transactions require a fee due to their structure - currently bitcoinj does not
          * correctly calculate this! As of late 2012 most transactions require no fee.
          */
         public BigInteger fee = BigInteger.ZERO;
@@ -1796,7 +1795,7 @@ public class Wallet implements Serializable, BlockChainListener {
      * prevent this, but that should only occur once the transaction has been accepted by the network. This implies
      * you cannot have more than one outstanding sending tx at once.</p>
      *
-     * @param address       The Litecoin address to send the money to.
+     * @param address       The Bitcoin address to send the money to.
      * @param nanocoins     How much currency to send, in nanocoins.
      * @return either the created Transaction or null if there are insufficient coins.
      * coins as spent until commitTx is called on the result.
@@ -2720,7 +2719,7 @@ public class Wallet implements Serializable, BlockChainListener {
 
                     // Check that the encrypted key can be successfully decrypted.
                     // This is done as it is a critical failure if the private key cannot be decrypted successfully
-                    // (all litecoin controlled by that private key is lost forever).
+                    // (all bitcoin controlled by that private key is lost forever).
                     // For a correctly constructed keyCrypter the encryption should always be reversible so it is just being as cautious as possible.
                     if (!ECKey.encryptionIsReversible(key, encryptedKey, keyCrypter, aesKey)) {
                         // Abort encryption
@@ -2990,8 +2989,7 @@ public class Wallet implements Serializable, BlockChainListener {
      * 
      * This is used to generate a BloomFilter which can be #{link BloomFilter.merge}d with another.
      * It could also be used if you have a specific target for the filter's size.
-     * 
-     * See the docs for {@link BloomFilter#BloomFilter(int, double)} for a brief explanation of anonymity when using bloom filters.
+     *
      */
     public BloomFilter getBloomFilter(int size, double falsePositiveRate, long nTweak) {
         BloomFilter filter = new BloomFilter(size, falsePositiveRate, nTweak);
@@ -3110,74 +3108,6 @@ public class Wallet implements Serializable, BlockChainListener {
             }
         } finally {
             lock.lock();
-        }
-    }
-	
-
-    /**
-     * Trims the wallet to a reasonable size, currently by evicting spent transactions.
-     *
-     * This is an attempt to conserve memory. It can in future be extended to evicting dead and
-     * unconfirming pending transactions, used keys, and more.
-     *
-     * As a general rule of thumb one transaction takes about 2 kB of heap memory.
-     *
-     * @param minTransactionsToKeep
-     *            minumum number of transactions to keep in wallet
-     */
-    public void trim(final int minTransactionsToKeep) {
-        lock.lock();
-        try {
-            // Determine number of transactions to evict.
-            final int constNumTransactions = pending.size() + unspent.size() + inactive.size()
-                    + dead.size();
-            final int numTransactions = constNumTransactions + spent.size();
-            final int numToEvict = numTransactions - minTransactionsToKeep;
-    
-            log.info("wallet has {} transactions and should have no more than {} transactions",
-                    numTransactions, minTransactionsToKeep);
-    
-            if (numToEvict <= 0)
-                return; // all roger, nothing to worry about
-    
-            // Build up list of candidates to delete. Should be spent and buried deep enough under
-            // blocks.
-            List<Transaction> candidates = new LinkedList<Transaction>();
-            for (final Transaction tx : spent.values()) {
-                if (tx.hasConfidence() && tx.getConfidence().getDepthInBlocks() > 2016) // interval
-                    candidates.add(tx);
-            }
-            log.info("looked for {} txns to evict and found {} candidates", numToEvict,
-                    candidates.size());
-    
-            if (candidates.size() == 0)
-                return; // we're too fat, but nothing can be done
-    
-            // If there are more candidates than needed, make sure only the oldest get evicted.
-            if (candidates.size() > numToEvict) {
-    
-                Collections.sort(candidates, new Comparator<Transaction>() {
-                    @Override
-                    public int compare(final Transaction tx1, final Transaction tx2) {
-                        return -Ints.compare(tx1.getConfidence().getDepthInBlocks(), tx2
-                                .getConfidence().getDepthInBlocks());
-                    }
-                });
-    
-                candidates = candidates.subList(0, numToEvict);
-            }
-    
-            // Evict transactions from spent pool. Keep pending and dead for now.
-            for (final Transaction tx : candidates)
-                spent.remove(tx.getHash());
-    
-            queueAutoSave();
-    
-            log.info("evicted {} spent transactions, wallet has {} transactions after trim",
-                    candidates.size(), constNumTransactions + spent.size());
-    
-        } finally {
-            lock.unlock();
         }
     }
 }

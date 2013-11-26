@@ -32,13 +32,13 @@ import static com.google.litecoin.core.Utils.*;
 
 /**
  * <p>A transaction represents the movement of coins from some addresses to some other addresses. It can also represent
- * the minting of new coins. A Transaction object corresponds to the equivalent in the Litecoin C++ implementation.</p>
+ * the minting of new coins. A Transaction object corresponds to the equivalent in the Bitcoin C++ implementation.</p>
  *
- * <p>Transactions are the fundamental atoms of Litecoin and have many powerful features. Read
- * <a href="http://code.google.com/p/litecoinj/wiki/WorkingWithTransactions">"Working with transactions"</a> in the
+ * <p>Transactions are the fundamental atoms of Bitcoin and have many powerful features. Read
+ * <a href="http://code.google.com/p/bitcoinj/wiki/WorkingWithTransactions">"Working with transactions"</a> in the
  * documentation to learn more about how to use this class.</p>
  *
- * <p>All Litecoin transactions are at risk of being reversed, though the risk is much less than with traditional payment
+ * <p>All Bitcoin transactions are at risk of being reversed, though the risk is much less than with traditional payment
  * systems. Transactions have <i>confidence levels</i>, which help you decide whether to trust a transaction or not.
  * Whether to trust a transaction is something that needs to be decided on a case by case basis - a rule that makes 
  * sense for selling MP3s might not make sense for selling cars, or accepting payments from a family member. If you
@@ -55,7 +55,7 @@ public class Transaction extends ChildMessage implements Serializable {
     public static final int MAX_STANDARD_TX_SIZE = 100 * 1024;
 
 
-    // These are serialized in both litecoin and java serialization.
+    // These are serialized in both bitcoin and java serialization.
     private long version;
     private ArrayList<TransactionInput> inputs;
 
@@ -127,7 +127,7 @@ public class Transaction extends ChildMessage implements Serializable {
     /**
      * Creates a transaction by reading payload starting from offset bytes in. Length of a transaction is fixed.
      * @param params NetworkParameters object.
-     * @param msg Litecoin protocol formatted byte array containing message content.
+     * @param msg Bitcoin protocol formatted byte array containing message content.
      * @param offset The location of the first msg byte within the array.
      * @param parseLazy Whether to perform a full parse immediately or delay until a read is requested.
      * @param parseRetain Whether to retain the backing byte array for quick reserialization.  
@@ -162,7 +162,7 @@ public class Transaction extends ChildMessage implements Serializable {
     }
 
     /**
-     * Used by LitecoinSerializer.  The serializer has to calculate a hash for checksumming so to
+     * Used by BitcoinSerializer.  The serializer has to calculate a hash for checksumming so to
      * avoid wasting the considerable effort a set method is provided so the serializer can set it.
      *
      * No verification is performed on this hash.
@@ -530,7 +530,7 @@ public class Transaction extends ChildMessage implements Serializable {
 
     /**
      * A coinbase transaction is one that creates a new coin. They are the first transaction in each block and their
-     * value is determined by a formula that all implementations of Litecoin share. In 2011 the value of a coinbase
+     * value is determined by a formula that all implementations of Bitcoin share. In 2011 the value of a coinbase
      * transaction is 50 coins, but in future it will be less. A coinbase transaction is defined not only by its
      * position in a block but by the data in the inputs.
      */
@@ -786,7 +786,7 @@ public class Transaction extends ChildMessage implements Serializable {
      * is simplified is specified by the type and anyoneCanPay parameters.<p>
      *
      * You don't normally ever need to call this yourself. It will become more useful in future as the contracts
-     * features of Litecoin are developed.
+     * features of Bitcoin are developed.
      *
      * @param inputIndex input the signature is being calculated for. Tx signatures are always relative to an input.
      * @param connectedScript the bytes that should be in the given input during signing.
@@ -810,7 +810,7 @@ public class Transaction extends ChildMessage implements Serializable {
         // The SIGHASH flags are used in the design of contracts, please see this page for a further understanding of
         // the purposes of the code in this method:
         //
-        //   https://en.litecoin.it/wiki/Contracts
+        //   https://en.bitcoin.it/wiki/Contracts
 
         try {
             // Store all the input scripts and clear them in preparation for signing. If we're signing a fresh
@@ -827,7 +827,7 @@ public class Transaction extends ChildMessage implements Serializable {
             }
 
             // This step has no purpose beyond being synchronized with the reference clients bugs. OP_CODESEPARATOR
-            // is a legacy holdover from a previous, broken design of executing scripts that shipped in Litecoin 0.1.
+            // is a legacy holdover from a previous, broken design of executing scripts that shipped in Bitcoin 0.1.
             // It was seriously flawed and would have let anyone take anyone elses money. Later versions switched to
             // the design we use today where scripts are executed independently but share a stack. This left the
             // OP_CODESEPARATOR instruction having no purpose as it was only meant to be used internally, not actually
@@ -853,7 +853,7 @@ public class Transaction extends ChildMessage implements Serializable {
                 // SIGHASH_SINGLE means only sign the output at the same index as the input (ie, my output).
                 if (inputIndex >= this.outputs.size()) {
                     // The input index is beyond the number of outputs, it's a buggy signature made by a broken
-                    // Litecoin implementation. The reference client also contains a bug in handling this case:
+                    // Bitcoin implementation. The reference client also contains a bug in handling this case:
                     // any transaction output that is signed in this case will result in both the signed output
                     // and any future outputs to this public key being steal-able by anyone who has
                     // the resulting signature and the public key (both of which are part of the signed tx input).
@@ -1057,7 +1057,7 @@ public class Transaction extends ChildMessage implements Serializable {
     /**
      * <p>Returns true if this transaction is considered finalized and can be placed in a block. Non-finalized
      * transactions won't be included by miners and can be replaced with newer versions using sequence numbers.
-     * This is useful in certain types of <a href="http://en.litecoin.it/wiki/Contracts">contracts</a>, such as
+     * This is useful in certain types of <a href="http://en.bitcoin.it/wiki/Contracts">contracts</a>, such as
      * micropayment channels.</p>
      *
      * <p>Note that currently the replacement feature is disabled in the Satoshi client and will need to be

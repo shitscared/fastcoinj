@@ -35,6 +35,7 @@ import java.awt.event.MouseEvent;
 import java.io.File;
 import java.io.IOException;
 import java.math.BigInteger;
+import java.net.InetAddress;
 import java.util.Date;
 import java.util.LinkedList;
 import java.util.List;
@@ -112,12 +113,12 @@ public class ToyWallet {
     }
     
     public ToyWallet(boolean testnet, boolean fullChain, String[] args) throws Exception {
-        // Set up a Litecoin connection + empty wallet. TODO: Simplify the setup for this use case.
-        if (testnet) {
-            params = NetworkParameters.testNet();
-        } else {
+        // Set up a Fastcoin connection + empty wallet. TODO: Simplify the setup for this use case.
+       // if (testnet) {
+          //  params = NetworkParameters.testNet();
+        //} else {
             params = NetworkParameters.prodNet();
-        }
+        //}
 
         // Try to read the wallet from storage, create a new one if not possible.
         boolean freshWallet = false;
@@ -174,9 +175,11 @@ public class ToyWallet {
         peerGroup = new PeerGroup(params, chain);
         peerGroup.setUserAgent("ToyWallet", "1.0");
         if (testnet) {
-            peerGroup.addPeerDiscovery(new IrcDiscovery("#litecoinTEST3"));
+            peerGroup.addPeerDiscovery(new IrcDiscovery("#fastcoinTEST3"));
         } else {
-            peerGroup.addPeerDiscovery(new DnsDiscovery(params));
+            //peerGroup.addPeerDiscovery(new DnsDiscovery(params));
+            peerGroup.addAddress(InetAddress.getByName("10.0.127.97"));
+            peerGroup.addPeerDiscovery(new IrcDiscovery("#fastcoin00"));
         }
         peerGroup.setMaxConnections(8);
         peerGroup.addWallet(wallet);
@@ -265,7 +268,7 @@ public class ToyWallet {
         txScrollPane = new JScrollPane(txTable);
         window.getContentPane().add(txScrollPane, BorderLayout.CENTER);
         
-        networkStats = new JLabel("Connecting to the Litecoin network ...");
+        networkStats = new JLabel("Connecting to the Fastcoin network ...");
         window.getContentPane().add(networkStats, BorderLayout.SOUTH);
     }
 }

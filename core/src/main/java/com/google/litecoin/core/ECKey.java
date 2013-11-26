@@ -59,7 +59,7 @@ import static com.google.common.base.Preconditions.checkArgument;
  * when you already have the public or private parts. If you create a key with only the public part, you can check
  * signatures but not create them.</p>
  *
- * <p>ECKey also provides access to Litecoin-Qt compatible text message signing, as accessible via the UI or JSON-RPC.
+ * <p>ECKey also provides access to Bitcoin-Qt compatible text message signing, as accessible via the UI or JSON-RPC.
  * This is slightly different to signing raw bytes - if you want to sign your own data and it won't be exposed as
  * text to people, you don't want to use this. If in doubt, ask on the mailing list.</p>
  *
@@ -76,7 +76,7 @@ public class ECKey implements Serializable {
     private static final long serialVersionUID = -728224901792295832L;
 
     static {
-        // All clients must agree on the curve to use by agreement. Litecoin uses secp256k1.
+        // All clients must agree on the curve to use by agreement. Bitcoin uses secp256k1.
         X9ECParameters params = SECNamedCurves.getByName("secp256k1");
         ecParams = new ECDomainParameters(params.getCurve(), params.getG(), params.getN(), params.getH());
         secureRandom = new SecureRandom();
@@ -130,7 +130,7 @@ public class ECKey implements Serializable {
     }
 
     /**
-     * Construct an ECKey from an ASN.1 encoded private key. These are produced by OpenSSL and stored by the Litecoin
+     * Construct an ECKey from an ASN.1 encoded private key. These are produced by OpenSSL and stored by the Bitcoin
      * reference implementation in its wallet. Note that this is slow because it requires an EC point multiply.
      */
     public static ECKey fromASN1(byte[] asn1privkey) {
@@ -202,7 +202,7 @@ public class ECKey implements Serializable {
     }
 
     /**
-     * Output this ECKey as an ASN.1 encoded private key, as understood by OpenSSL or used by the Litecoin reference
+     * Output this ECKey as an ASN.1 encoded private key, as understood by OpenSSL or used by the BitCoin reference
      * implementation in its wallet storage format.
      */
     public byte[] toASN1() {
@@ -309,7 +309,7 @@ public class ECKey implements Serializable {
 
     /**
      * Groups the two components that make up a signature, and provides a way to encode to DER form, which is
-     * how ECDSA signatures are represented when embedded in other data structures in the Litecoin protocol. The raw
+     * how ECDSA signatures are represented when embedded in other data structures in the Bitcoin protocol. The raw
      * components can be useful for doing further EC maths on them.
      */
     public static class ECDSASignature {
@@ -322,7 +322,7 @@ public class ECKey implements Serializable {
 
         /**
          * What we get back from the signer are the two components of a signature, r and s. To get a flat byte stream
-         * of the type used by Litecoin we have to encode them using DER encoding, which is just a way to pack the two
+         * of the type used by Bitcoin we have to encode them using DER encoding, which is just a way to pack the two
          * components into a structure.
          */
         public byte[] encodeToDER() {
@@ -341,7 +341,7 @@ public class ECKey implements Serializable {
     }
 
     /**
-     * Signs the given hash and returns the R and S components as BigIntegers. In the Litecoin protocol, they are
+     * Signs the given hash and returns the R and S components as BigIntegers. In the Bitcoin protocol, they are
      * usually encoded using DER format, so you want {@link com.google.litecoin.core.ECKey.ECDSASignature#toASN1()}
      * instead. However sometimes the independent components can be useful, for instance, if you're doing to do
      * further EC maths on them.
@@ -352,7 +352,7 @@ public class ECKey implements Serializable {
     }
 
     /**
-     * Signs the given hash and returns the R and S components as BigIntegers. In the Litecoin protocol, they are
+     * Signs the given hash and returns the R and S components as BigIntegers. In the Bitcoin protocol, they are
      * usually encoded using DER format, so you want {@link com.google.litecoin.core.ECKey.ECDSASignature#encodeToDER()}
      * instead. However sometimes the independent components can be useful, for instance, if you're doing to do further
      * EC maths on them.
@@ -462,7 +462,7 @@ public class ECKey implements Serializable {
     }
 
     /**
-     * Signs a text message using the standard Litecoin messaging signing format and returns the signature as a base64
+     * Signs a text message using the standard Bitcoin messaging signing format and returns the signature as a base64
      * encoded string.
      *
      * @throws IllegalStateException if this ECKey does not have the private part.
@@ -473,7 +473,7 @@ public class ECKey implements Serializable {
     }
 
     /**
-     * Signs a text message using the standard Litecoin messaging signing format and returns the signature as a base64
+     * Signs a text message using the standard Bitcoin messaging signing format and returns the signature as a base64
      * encoded string.
      *
      * @throws IllegalStateException if this ECKey does not have the private part.
@@ -505,14 +505,14 @@ public class ECKey implements Serializable {
     }
 
     /**
-     * Given an arbitrary piece of text and a Litecoin-format message signature encoded in base64, returns an ECKey
+     * Given an arbitrary piece of text and a Bitcoin-format message signature encoded in base64, returns an ECKey
      * containing the public key that was used to sign it. This can then be compared to the expected public key to
-     * determine if the signature was correct. These sorts of signatures are compatible with the Litecoin-Qt/litecoind
+     * determine if the signature was correct. These sorts of signatures are compatible with the Bitcoin-Qt/bitcoind
      * format generated by signmessage/verifymessage RPCs and GUI menu options. They are intended for humans to verify
      * their communications with each other, hence the base64 format and the fact that the input is text.
      *
      * @param message Some piece of human readable text.
-     * @param signatureBase64 The Litecoin-format message signature in base64
+     * @param signatureBase64 The Bitcoin-format message signature in base64
      * @throws SignatureException If the public key could not be recovered or if there was a signature format error.
      */
     public static ECKey signedMessageToKey(String message, String signatureBase64) throws SignatureException {
@@ -747,7 +747,7 @@ public class ECKey implements Serializable {
     /**
      * Check that it is possible to decrypt the key with the keyCrypter and that the original key is returned.
      *
-     * Because it is a critical failure if the private keys cannot be decrypted successfully (resulting of loss of all litecoins controlled
+     * Because it is a critical failure if the private keys cannot be decrypted successfully (resulting of loss of all bitcoins controlled
      * by the private key) you can use this method to check when you *encrypt* a wallet that it can definitely be decrypted successfully.
      * See {@link Wallet#encrypt(KeyCrypter keyCrypter, KeyParameter aesKey)} for example usage.
      *
