@@ -1,5 +1,5 @@
 /**
- * Copyright 2012 The Bitcoin Developers
+ * Copyright 2012 The Litecoin Developers
  * Copyright 2012 Matt Corallo
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -63,7 +63,7 @@ public class PartialMerkleTree extends Message {
         super(params, payloadBytes, offset);
     }
     
-    public void bitcoinSerializeToStream(OutputStream stream) throws IOException {
+    public void litecoinSerializeToStream(OutputStream stream) throws IOException {
         throw new RuntimeException("Not implemented");
     }
 

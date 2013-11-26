@@ -3,11 +3,3 @@ target
 .classpath
 .settings
 .idea
-
-*.jar
-
-*.blockchain
-
-*.db
-
-*.wallet

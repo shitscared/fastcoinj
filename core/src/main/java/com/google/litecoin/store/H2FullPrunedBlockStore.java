@@ -495,7 +495,7 @@ public class H2FullPrunedBlockStore implements FullPrunedBlockStore {
             BigInteger chainWork = new BigInteger(results.getBytes(1));
             int height = results.getInt(2);
             Block b = new Block(params, results.getBytes(3));
-            //b.verifyHeader();
+            b.verifyHeader();
             StoredBlock stored = new StoredBlock(b, chainWork, height);
             return stored;
         } catch (SQLException ex) {
@@ -503,10 +503,10 @@ public class H2FullPrunedBlockStore implements FullPrunedBlockStore {
         } catch (ProtocolException e) {
             // Corrupted database.
             throw new BlockStoreException(e);
-        //} catch (VerificationException e) {
+        } catch (VerificationException e) {
             // Should not be able to happen unless the database contains bad
             // blocks.
-          //  throw new BlockStoreException(e);
+            throw new BlockStoreException(e);
         } finally {
             if (s != null)
                 try {

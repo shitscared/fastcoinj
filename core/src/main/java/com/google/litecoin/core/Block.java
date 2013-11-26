@@ -35,10 +35,10 @@ import static com.google.litecoin.core.Utils.scryptDigest;
 import static com.google.litecoin.core.Utils.doubleDigestTwoBuffers;
 
 /**
- * <p>A block is a group of transactions, and is one of the fundamental data structures of the Bitcoin system.
+ * <p>A block is a group of transactions, and is one of the fundamental data structures of the Litecoin system.
  * It records a set of {@link Transaction}s together with some data that links it into a place in the global block
  * chain, and proves that a difficult calculation was done over its contents. See
- * <a href="http://www.bitcoin.org/bitcoin.pdf">the Bitcoin technical paper</a> for
+ * <a href="http://www.litecoin.org/litecoin.pdf">the Litecoin technical paper</a> for
  * more detail on blocks. <p/>
  *
  * To get a block, you can either build one from the raw bytes you can get from another implementation, or request one
@@ -55,7 +55,7 @@ public class Block extends Message {
 
     /**
      * A constant shared by the entire network: how large in bytes a block is allowed to be. One day we may have to
-     * upgrade everyone to change this, so Bitcoin can continue to grow. For now it exists as an anti-DoS measure to
+     * upgrade everyone to change this, so Litecoin can continue to grow. For now it exists as an anti-DoS measure to
      * avoid somebody creating a titanically huge but valid block and forcing everyone to download/store it forever.
      */
     public static final int MAX_BLOCK_SIZE = 1 * 1000 * 1000;
@@ -64,7 +64,7 @@ public class Block extends Message {
      * the number in a block to prevent somebody mining a huge block that has way more sigops than normal, so is very
      * expensive/slow to verify.
      */
-    public static final int MAX_BLOCK_SIGOPS = MAX_BLOCK_SIZE / 32;
+    public static final int MAX_BLOCK_SIGOPS = MAX_BLOCK_SIZE / 50;
 
     /** A value for difficultyTarget (nBits) that allows half of all possible hash solutions. Used in unit testing. */
     static final long EASIEST_DIFFICULTY_TARGET = 0x207fFFFFL;
@@ -110,13 +110,13 @@ public class Block extends Message {
         length = 80;
     }
 
-    /** Constructs a block object from the Bitcoin wire format. */
+    /** Constructs a block object from the Litecoin wire format. */
     public Block(NetworkParameters params, byte[] payloadBytes) throws ProtocolException {
         super(params, payloadBytes, 0, false, false, payloadBytes.length);
     }
 
     /**
-     * Contruct a block object from the Bitcoin wire format.
+     * Contruct a block object from the Litecoin wire format.
      * @param params NetworkParameters object.
      * @param parseLazy Whether to perform a full parse immediately or delay until a read is requested.
      * @param parseRetain Whether to retain the backing byte array for quick reserialization.  
@@ -132,8 +132,8 @@ public class Block extends Message {
     }
 
     /**
-     * <p>A utility method that calculates how much new Bitcoin would be created by the block at the given height.
-     * The inflation of Bitcoin is predictable and drops roughly every 4 years (210,000 blocks). At the dawn of
+     * <p>A utility method that calculates how much new Litecoin would be created by the block at the given height.
+     * The inflation of Litecoin is predictable and drops roughly every 4 years (210,000 blocks). At the dawn of
      * the system it was 50 coins per block, in late 2012 it went to 25 coins per block, and so on. The size of
      * a coinbase transaction is inflation plus fees.</p>
      *
@@ -141,7 +141,7 @@ public class Block extends Message {
      * </p>
      */
     public BigInteger getBlockInflation(int height) {
-        return Utils.toNanoCoins(32, 0).shiftRight(height / params.getSubsidyDecreaseBlockCount());
+        return Utils.toNanoCoins(50, 0).shiftRight(height / params.getSubsidyDecreaseBlockCount());
     }
 
     private void readObject(ObjectInputStream ois) throws ClassNotFoundException, IOException {
@@ -381,7 +381,7 @@ public class Block extends Message {
      *
      * @throws IOException
      */
-    public byte[] bitcoinSerialize() {
+    public byte[] litecoinSerialize() {
         // we have completely cached byte array.
         if (headerBytesValid && transactionBytesValid) {
             Preconditions.checkNotNull(bytes, "Bytes should never be null if headerBytesValid && transactionBytesValid");
@@ -594,7 +594,7 @@ public class Block extends Message {
     }
 
     /**
-     * Returns the difficulty target as a 256 bit value that can be compared to a SHA-256 hash. Inside a block the
+     * Returns the difficulty target as a 320 bit value that can be compared to a scrypt hash. Inside a block the
      * target is represented using a compact form. If this form decodes to a value that is out of bounds, an exception
      * is thrown.
      */
@@ -835,7 +835,7 @@ public class Block extends Message {
         hash = null;
     }
 
-    /** Returns the version of the block data structure as defined by the Bitcoin protocol. */
+    /** Returns the version of the block data structure as defined by the Litecoin protocol. */
     public long getVersion() {
         maybeParseHeader();
         return version;
@@ -884,7 +884,7 @@ public class Block extends Message {
      * BlockChain} verifies that this is not too easy by looking at the length of the chain when the block is added.
      * To find the actual value the hash should be compared against, use
      * {@link com.google.litecoin.core.Block#getDifficultyTargetAsInteger()}. Note that this is <b>not</b> the same as
-     * the difficulty value reported by the Bitcoin "getdifficulty" RPC that you may see on various block explorers.
+     * the difficulty value reported by the Litecoin "getdifficulty" RPC that you may see on various block explorers.
      * That number is the result of applying a formula to the underlying difficulty to normalize the minimum to 1.
      * Calculating the difficulty that way is currently unsupported.
      */
@@ -951,7 +951,7 @@ public class Block extends Message {
      * Returns a solved block that builds on top of this one. This exists for unit tests.
      */
     Block createNextBlock(Address to, long time) {
-        return createNextBlock(to, null, time, EMPTY_BYTES, Utils.toNanoCoins(32, 0));
+        return createNextBlock(to, null, time, EMPTY_BYTES, Utils.toNanoCoins(50, 0));
     }
 
     /**
@@ -966,7 +966,7 @@ public class Block extends Message {
         if (to != null) {
             // Add a transaction paying 50 coins to the "to" address.
             Transaction t = new Transaction(params);
-            t.addOutput(new TransactionOutput(params, t, Utils.toNanoCoins(32, 0), to));
+            t.addOutput(new TransactionOutput(params, t, Utils.toNanoCoins(50, 0), to));
             // The input does not really need to be a valid signature, as long as it has the right general form.
             TransactionInput input;
             if (prevOut == null) {
@@ -1001,7 +1001,7 @@ public class Block extends Message {
 
     // Visible for testing.
     public Block createNextBlock(Address to, TransactionOutPoint prevOut) {
-        return createNextBlock(to, prevOut, Utils.now().getTime() / 1000, EMPTY_BYTES, Utils.toNanoCoins(32, 0));
+        return createNextBlock(to, prevOut, Utils.now().getTime() / 1000, EMPTY_BYTES, Utils.toNanoCoins(50, 0));
     }
 
     // Visible for testing.
@@ -1010,7 +1010,7 @@ public class Block extends Message {
     }
 
     public Block createNextBlock(Address to) {
-        return createNextBlock(to, Utils.toNanoCoins(32, 0));
+        return createNextBlock(to, Utils.toNanoCoins(50, 0));
     }
 
     // Visible for testing.
@@ -1023,7 +1023,7 @@ public class Block extends Message {
      * This method is intended for test use only.
      */
     Block createNextBlockWithCoinbase(byte[] pubKey) {
-        return createNextBlock(null, null, Utils.now().getTime() / 1000, pubKey, Utils.toNanoCoins(32, 0));
+        return createNextBlock(null, null, Utils.now().getTime() / 1000, pubKey, Utils.toNanoCoins(50, 0));
     }
 
     /**

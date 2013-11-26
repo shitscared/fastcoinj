@@ -22,7 +22,7 @@ import static com.google.common.base.Preconditions.checkState;
 public class BuildCheckpoints {
     public static void main(String[] args) throws Exception {
         BriefLogFormatter.init();
-        final NetworkParameters params = NetworkParameters.prodNet();
+        final NetworkParameters params = NetworkParameters.prodNetHank();
 
         // Sorted map of UNIX time of block to StoredBlock object.
         final TreeMap<Integer, StoredBlock> checkpoints = new TreeMap<Integer, StoredBlock>();

@@ -32,8 +32,8 @@ import java.util.Date;
 import static com.google.common.base.Preconditions.checkArgument;
 
 /**
- * A collection of various utility methods that are helpful for working with the Bitcoin protocol.
- * To enable debug logging from the library, run with -Dbitcoinj.logging=true on your command line.
+ * A collection of various utility methods that are helpful for working with the Litecoin protocol.
+ * To enable debug logging from the library, run with -Dlitecoinj.logging=true on your command line.
  */
 public class Utils {
     private static final MessageDigest digest;
@@ -45,24 +45,24 @@ public class Utils {
         }
     }
 
-    /** The string that prefixes all text messages signed using Bitcoin keys. */
-    public static final String BITCOIN_SIGNED_MESSAGE_HEADER = "Bitcoin Signed Message:\n";
+    /** The string that prefixes all text messages signed using Litecoin keys. */
+    public static final String LITECOIN_SIGNED_MESSAGE_HEADER = "Litecoin Signed Message:\n";
 
     // TODO: Replace this nanocoins business with something better.
 
     /**
-     * How many "nanocoins" there are in a Bitcoin.
+     * How many "nanocoins" there are in a Litecoin.
      * <p/>
-     * A nanocoin is the smallest unit that can be transferred using Bitcoin.
+     * A nanocoin is the smallest unit that can be transferred using Litecoin.
      * The term nanocoin is very misleading, though, because there are only 100 million
      * of them in a coin (whereas one would expect 1 billion.
      */
     public static final BigInteger COIN = new BigInteger("100000000", 10);
 
     /**
-     * How many "nanocoins" there are in 0.01 BitCoins.
+     * How many "nanocoins" there are in 0.01 Litecoins.
      * <p/>
-     * A nanocoin is the smallest unit that can be transferred using Bitcoin.
+     * A nanocoin is the smallest unit that can be transferred using Litecoin.
      * The term nanocoin is very misleading, though, because there are only 100 million
      * of them in a coin (whereas one would expect 1 billion).
      */
@@ -172,7 +172,7 @@ public class Utils {
 
     /**
      * Calculates the SHA-256 hash of the given byte range, and then hashes the resulting hash again. This is
-     * standard procedure in Bitcoin. The resulting hash is in big endian form.
+     * standard procedure in Litecoin. The resulting hash is in big endian form.
      */
     public static byte[] doubleDigest(byte[] input, int offset, int length) {
         synchronized (digest) {
@@ -478,15 +478,15 @@ public class Utils {
     /**
      * <p>Given a textual message, returns a byte buffer formatted as follows:</p>
      *
-     * <tt><p>[24] "Bitcoin Signed Message:\n" [message.length as a varint] message</p></tt>
+     * <tt><p>[24] "Litecoin Signed Message:\n" [message.length as a varint] message</p></tt>
      */
     public static byte[] formatMessageForSigning(String message) {
         VarInt size = new VarInt(message.length());
-        int totalSize = 1 + BITCOIN_SIGNED_MESSAGE_HEADER.length() + size.getSizeInBytes() + message.length();
+        int totalSize = 1 + LITECOIN_SIGNED_MESSAGE_HEADER.length() + size.getSizeInBytes() + message.length();
         byte[] result = new byte[totalSize];
         int cursor = 0;
-        result[cursor++] = (byte) BITCOIN_SIGNED_MESSAGE_HEADER.length();
-        byte[] bytes = BITCOIN_SIGNED_MESSAGE_HEADER.getBytes(Charset.forName("UTF-8"));
+        result[cursor++] = (byte) LITECOIN_SIGNED_MESSAGE_HEADER.length();
+        byte[] bytes = LITECOIN_SIGNED_MESSAGE_HEADER.getBytes(Charset.forName("UTF-8"));
         System.arraycopy(bytes, 0, result, cursor, bytes.length);
         cursor += bytes.length;
         bytes = size.encode();

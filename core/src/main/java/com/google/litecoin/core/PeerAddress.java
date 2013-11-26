@@ -29,7 +29,7 @@ import static com.google.common.base.Preconditions.checkNotNull;
 
 /**
  * A PeerAddress holds an IP address and port number representing the network location of
- * a peer in the Bitcoin P2P network. It exists primarily for serialization purposes.
+ * a peer in the Litecoin P2P network. It exists primarily for serialization purposes.
  */
 public class PeerAddress extends ChildMessage {
     private static final long serialVersionUID = 7501293709324197411L;
@@ -50,9 +50,9 @@ public class PeerAddress extends ChildMessage {
     /**
      * Construct a peer address from a serialized payload.
      * @param params NetworkParameters object.
-     * @param msg Bitcoin protocol formatted byte array containing message content.
+     * @param msg Litecoin protocol formatted byte array containing message content.
      * @param offset The location of the first msg byte within the array.
-     * @param protocolVersion Bitcoin protocol version.
+     * @param protocolVersion Litecoin protocol version.
      * @param parseLazy Whether to perform a full parse immediately or delay until a read is requested.
      * @param parseRetain Whether to retain the backing byte array for quick reserialization.  
      * If true and the backing byte array is invalidated due to modification of a field then 

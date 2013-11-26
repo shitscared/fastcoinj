@@ -41,10 +41,10 @@ import com.google.litecoin.core.StoredUndoableBlock;
  * <p>It must store the {@link StoredBlock} of all blocks.</p>
  *
  * <p>A FullPrunedBlockStore contains a map of hashes to [Full]StoredBlock. The hash is the double digest of the
- * Bitcoin serialization of the block header, <b>not</b> the header with the extra data as well.</p>
+ * Litecoin serialization of the block header, <b>not</b> the header with the extra data as well.</p>
  * 
  * <p>A FullPrunedBlockStore also contains a map of hash+index to StoredTransactionOutput.  Again, the hash is
- * a standard Bitcoin double-SHA256 hash of the transaction.</p>
+ * a standard Litecoin double-SHA256 hash of the transaction.</p>
  *
  * <p>FullPrunedBlockStores are thread safe.</p>
  */

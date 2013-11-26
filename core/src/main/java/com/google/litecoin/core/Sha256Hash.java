@@ -68,7 +68,7 @@ public class Sha256Hash implements Serializable {
     }
 
     /**
-     * Calculates the hash of the hash of the contents. This is a standard operation in Bitcoin.
+     * Calculates the hash of the hash of the contents. This is a standard operation in Litecoin.
      */
     public static Sha256Hash createDouble(byte[] contents) {
         return new Sha256Hash(Utils.doubleDigest(contents));
@@ -104,7 +104,7 @@ public class Sha256Hash implements Serializable {
      */
     @Override
     public int hashCode() {
-        // Use the last 4 bytes, not the first 4 which are often zeros in Bitcoin.
+        // Use the last 4 bytes, not the first 4 which are often zeros in Litecoin.
         return (bytes[31] & 0xFF) | ((bytes[30] & 0xFF) << 8) | ((bytes[29] & 0xFF) << 16) | ((bytes[28] & 0xFF) << 24);
     }
 

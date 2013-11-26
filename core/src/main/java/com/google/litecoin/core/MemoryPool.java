@@ -25,6 +25,7 @@ import java.lang.ref.ReferenceQueue;
 import java.lang.ref.WeakReference;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -87,16 +88,14 @@ public class MemoryPool {
      * @param size Max number of transactions to track. The pool will fill up to this size then stop growing.
      */
     public MemoryPool(final int size) {
-        memoryPool = new LinkedHashMap<Sha256Hash, Entry>();
-
-        /*{
+        memoryPool = new LinkedHashMap<Sha256Hash, Entry>() {
             @Override
             protected boolean removeEldestEntry(Map.Entry<Sha256Hash, Entry> entry) {
                 // An arbitrary choice to stop the memory used by tracked transactions getting too huge in the event
                 // of some kind of DoS attack.
                 return size() > size;
             }
-        };*/
+        };
         referenceQueue = new ReferenceQueue<Transaction>();
     }
 

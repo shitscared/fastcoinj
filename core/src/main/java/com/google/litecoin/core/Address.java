@@ -17,7 +17,7 @@
 package com.google.litecoin.core;
 
 /**
- * <p>A Bitcoin address looks like 1MsScoe2fTJoq4ZPdQgqyhgWeoNamYPevy and is derived from an elliptic curve public key
+ * <p>A Litecoin address looks like 1MsScoe2fTJoq4ZPdQgqyhgWeoNamYPevy and is derived from an elliptic curve public key
  * plus a set of network parameters. Not to be confused with a {@link PeerAddress} or {@link AddressMessage}
  * which are about network (TCP) addresses.</p>
  *
@@ -70,7 +70,7 @@ public class Address extends VersionedChecksummedBytes {
         }
     }
 
-    /** The (big endian) 20 byte hash that is the core of a Bitcoin address. */
+    /** The (big endian) 20 byte hash that is the core of a Litecoin address. */
     public byte[] getHash160() {
         return bytes;
     }

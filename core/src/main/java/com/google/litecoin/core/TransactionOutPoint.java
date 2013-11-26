@@ -37,7 +37,7 @@ public class TransactionOutPoint extends ChildMessage implements Serializable {
     /** Which output of that transaction we are talking about. */
     private long index;
 
-    // This is not part of Bitcoin serialization. It's included in Java serialization.
+    // This is not part of Litecoin serialization. It's included in Java serialization.
     // It points to the connected transaction.
     Transaction fromTx;
 

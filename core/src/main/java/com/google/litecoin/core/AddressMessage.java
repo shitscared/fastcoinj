@@ -76,7 +76,7 @@ public class AddressMessage extends Message {
     }
 
     /* (non-Javadoc)
-      * @see Message#bitcoinSerializeToStream(java.io.OutputStream)
+      * @see Message#litecoinSerializeToStream(java.io.OutputStream)
       */
     @Override
     void litecoinSerializeToStream(OutputStream stream) throws IOException {
