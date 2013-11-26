@@ -35,7 +35,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * <p>Provides a standard implementation of a Litecoin URI with support for the
+ * <p>Provides a standard implementation of a Bitcoin URI with support for the
  * following:</p>
  *
  * <ul>
@@ -113,7 +113,7 @@ public class LitecoinURI {
      * @param params The network parameters that determine which network the URI is from, or null if you don't have
      *               any expectation about what network the URI is for and wish to check yourself.
      * @param input The raw URI data to be parsed (see class comments for accepted formats)
-     * @throws LitecoinURIParseException If the input fails Litecoin URI syntax and semantic checks.
+     * @throws LitecoinURIParseException If the input fails Bitcoin URI syntax and semantic checks.
      */
     public LitecoinURI(NetworkParameters params, String input) {
         // Basic validation
@@ -176,7 +176,7 @@ public class LitecoinURI {
      *                            separated by '=' e.g. 'amount=0.2')
      */
     private void parseParameters(NetworkParameters params, String addressToken, String[] nameValuePairTokens) {
-        // Attempt to parse the addressToken as a Litecoin address for this network
+        // Attempt to parse the addressToken as a Bitcoin address for this network
         try {
             Address address = new Address(params, addressToken);
             putWithValidation(FIELD_ADDRESS, address);
@@ -188,7 +188,7 @@ public class LitecoinURI {
         for (String nameValuePairToken : nameValuePairTokens) {
             String[] tokens = nameValuePairToken.split("=");
             if (tokens.length != 2 || "".equals(tokens[0])) {
-                throw new LitecoinURIParseException("Malformed Litecoin URI - cannot parse name value pair '" +
+                throw new LitecoinURIParseException("Malformed Bitcoin URI - cannot parse name value pair '" +
                         nameValuePairToken + "'");
             }
 
@@ -239,7 +239,7 @@ public class LitecoinURI {
     }
 
     /**
-     * @return The Litecoin Address from the URI
+     * @return The Bitcoin Address from the URI
      */
     public Address getAddress() {
         return (Address) parameterMap.get(FIELD_ADDRESS);
@@ -296,13 +296,13 @@ public class LitecoinURI {
     }
 
     /**
-     * Simple Litecoin URI builder using known good fields.
+     * Simple Bitcoin URI builder using known good fields.
      * 
-     * @param address The Litecoin address
+     * @param address The Bitcoin address
      * @param amount The amount in nanocoins (decimal)
      * @param label A label
      * @param message A message
-     * @return A String containing the Litecoin URI
+     * @return A String containing the Bitcoin URI
      */
     public static String convertToLitecoinURI(String address, BigInteger amount, String label, String message) {
         Preconditions.checkNotNull(address);

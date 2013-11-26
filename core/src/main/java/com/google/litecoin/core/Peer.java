@@ -112,7 +112,7 @@ public class Peer {
         Sha256Hash hash;
         SettableFuture future;
         // If the peer does not support the notfound message, we'll use ping/pong messages to simulate it. This is
-        // a nasty hack that relies on the fact that bitcoin-qt is single threaded and processes messages in order.
+        // a nasty hack that relies on the fact that litecoin-qt is single threaded and processes messages in order.
         // The nonce field records which pong should clear this request as "not found".
         long nonce;
     }
@@ -1052,7 +1052,7 @@ public class Peer {
             List<Sha256Hash> blockLocator = new ArrayList<Sha256Hash>(51);
             // For now we don't do the exponential thinning as suggested here:
             //
-            //   https://en.bitcoin.it/wiki/Protocol_specification#getblocks
+            //   https://en.litecoin.it/wiki/Protocol_specification#getblocks
             //
             // This is because it requires scanning all the block chain headers, which is very slow. Instead we add the top
             // 50 block headers. If there is a re-org deeper than that, we'll end up downloading the entire chain. We

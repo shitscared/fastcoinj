@@ -1,7 +1,7 @@
 package com.google.litecoin.uri;
 
 /**
- * <p>Exception to provide the following to {@link BitcoinURI}:</p>
+ * <p>Exception to provide the following to {@link LitecoinURI}:</p>
  * <ul>
  * <li>Provision of parsing error messages</li>
  * </ul>

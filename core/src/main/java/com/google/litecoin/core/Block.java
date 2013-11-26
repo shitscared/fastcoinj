@@ -38,7 +38,7 @@ import static com.google.litecoin.core.Utils.doubleDigestTwoBuffers;
  * <p>A block is a group of transactions, and is one of the fundamental data structures of the Bitcoin system.
  * It records a set of {@link Transaction}s together with some data that links it into a place in the global block
  * chain, and proves that a difficult calculation was done over its contents. See
- * <a href="http://www.bitcoin.org/bitcoin.pdf">the Bitcoin technical paper</a> for
+ * <a href="http://www.litecoin.org/litecoin.pdf">the Bitcoin technical paper</a> for
  * more detail on blocks. <p/>
  *
  * To get a block, you can either build one from the raw bytes you can get from another implementation, or request one
@@ -381,7 +381,7 @@ public class Block extends Message {
      *
      * @throws IOException
      */
-    public byte[] bitcoinSerialize() {
+    public byte[] litecoinSerialize() {
         // we have completely cached byte array.
         if (headerBytesValid && transactionBytesValid) {
             Preconditions.checkNotNull(bytes, "Bytes should never be null if headerBytesValid && transactionBytesValid");

@@ -55,7 +55,7 @@ public class Transaction extends ChildMessage implements Serializable {
     public static final int MAX_STANDARD_TX_SIZE = 100 * 1024;
 
 
-    // These are serialized in both bitcoin and java serialization.
+    // These are serialized in both litecoin and java serialization.
     private long version;
     private ArrayList<TransactionInput> inputs;
 
@@ -162,7 +162,7 @@ public class Transaction extends ChildMessage implements Serializable {
     }
 
     /**
-     * Used by BitcoinSerializer.  The serializer has to calculate a hash for checksumming so to
+     * Used by LitecoinSerializer.  The serializer has to calculate a hash for checksumming so to
      * avoid wasting the considerable effort a set method is provided so the serializer can set it.
      *
      * No verification is performed on this hash.
@@ -810,7 +810,7 @@ public class Transaction extends ChildMessage implements Serializable {
         // The SIGHASH flags are used in the design of contracts, please see this page for a further understanding of
         // the purposes of the code in this method:
         //
-        //   https://en.bitcoin.it/wiki/Contracts
+        //   https://en.litecoin.it/wiki/Contracts
 
         try {
             // Store all the input scripts and clear them in preparation for signing. If we're signing a fresh
@@ -1057,7 +1057,7 @@ public class Transaction extends ChildMessage implements Serializable {
     /**
      * <p>Returns true if this transaction is considered finalized and can be placed in a block. Non-finalized
      * transactions won't be included by miners and can be replaced with newer versions using sequence numbers.
-     * This is useful in certain types of <a href="http://en.bitcoin.it/wiki/Contracts">contracts</a>, such as
+     * This is useful in certain types of <a href="http://en.litecoin.it/wiki/Contracts">contracts</a>, such as
      * micropayment channels.</p>
      *
      * <p>Note that currently the replacement feature is disabled in the Satoshi client and will need to be

@@ -74,7 +74,7 @@ public abstract class EmptyMessage extends Message {
     }
 
     /* (non-Javadoc)
-      * @see Message#bitcoinSerialize()
+      * @see Message#litecoinSerialize()
       */
     @Override
     public byte[] litecoinSerialize() {

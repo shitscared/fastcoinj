@@ -121,7 +121,7 @@ public class FullPrunedBlockChain extends AbstractBlockChain {
             if (!params.isCheckpoint(height)) {
                 // BIP30 violator blocks are ones that contain a duplicated transaction. They are all in the
                 // checkpoints list and we therefore only check non-checkpoints for duplicated transactions here. See the
-                // BIP30 document for more details on this: https://en.bitcoin.it/wiki/BIP_0030
+                // BIP30 document for more details on this: https://en.litecoin.it/wiki/BIP_0030
                 for (Transaction tx : block.transactions) {
                     Sha256Hash hash = tx.getHash();
                     // If we already have unspent outputs for this hash, we saw the tx already. Either the block is
@@ -170,7 +170,7 @@ public class FullPrunedBlockChain extends AbstractBlockChain {
                         final int currentIndex = index;
                         final Transaction txCache;
                         try {
-                            txCache = new Transaction(params, tx.unsafeLitecoinSerialize());
+                            txCache = new Transaction(params, tx.unsafelitecoinSerialize());
                         } catch (ProtocolException e1) {
                             throw new RuntimeException(e1);
                         }

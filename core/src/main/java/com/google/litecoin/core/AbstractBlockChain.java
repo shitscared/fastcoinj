@@ -800,7 +800,7 @@ public abstract class AbstractBlockChain {
         // and then leaving, making it too hard to mine a block. On non-difficulty transition points, easy
         // blocks are allowed if there has been a span of 20 minutes without one.
         final long timeDelta = next.getTimeSeconds() - prev.getTimeSeconds();
-        // There is an integer underflow bug in bitcoin-qt that means mindiff blocks are accepted when time
+        // There is an integer underflow bug in litecoin-qt that means mindiff blocks are accepted when time
         // goes backwards.
         if (timeDelta >= 0 && timeDelta <= NetworkParameters.TARGET_SPACING * 2) {
             // Walk backwards until we find a block that doesn't have the easiest proof of work, then check

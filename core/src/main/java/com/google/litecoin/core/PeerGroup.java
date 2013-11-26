@@ -251,7 +251,7 @@ public class PeerGroup extends AbstractIdleService {
     }
 
     // Create a Netty pipeline factory.  The pipeline factory will create a network processing
-    // pipeline with the bitcoin serializer ({@code TCPNetworkConnection}) downstream
+    // pipeline with the litecoin serializer ({@code TCPNetworkConnection}) downstream
     // of the higher level {@code Peer}.  Received packets will first be decoded, then passed
     // {@code Peer}.  Sent packets will be created by the {@code Peer}, then encoded and sent.
     private ChannelPipelineFactory makePipelineFactory(final NetworkParameters params, final AbstractBlockChain chain) {
@@ -351,7 +351,7 @@ public class PeerGroup extends AbstractIdleService {
      * Sets the {@link VersionMessage} that will be announced on newly created connections. A version message is
      * primarily interesting because it lets you customize the "subVer" field which is used a bit like the User-Agent
      * field from HTTP. It means your client tells the other side what it is, see
-     * <a href="https://en.bitcoin.it/wiki/BIP_0014">BIP 14</a>.
+     * <a href="https://en.litecoin.it/wiki/BIP_0014">BIP 14</a>.
      *
      * The VersionMessage you provide is copied and the best chain height/time filled in for each new connection,
      * therefore you don't have to worry about setting that. The provided object is really more of a template.

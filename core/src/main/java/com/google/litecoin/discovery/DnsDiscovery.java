@@ -57,10 +57,7 @@ public class DnsDiscovery implements PeerDiscovery {
  +    {"a1.fastcoinfor.me","u1.fastcoinfor.me"},
  +    {"a1.fastcoin.ca","u1.fastcoin.ca"},
  +    {"a1.fastcoin.ws","u1.fastcoin.ws"},*/
-      "fastcoinfor.me","u1.fastcoinfor.me",
-      "fastcoin.ws","u1.fastcoin.ws",
-      "fastcoinfor.me","a1.fastcoinfor.me",
-      "fastcoin.ws","a1.fastcoin.ws",
+      "a1.fastcoin.ws","u1.fastcoin.ws",
     };
 
     /**

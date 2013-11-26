@@ -277,20 +277,20 @@ public abstract class Message implements Serializable {
     }
 
     /**
-     * Returns a copy of the array returned by {@link Message#unsafeLitecoinSerialize()}, which is safe to mutate.
+     * Returns a copy of the array returned by {@link Message#unsafelitecoinSerialize()}, which is safe to mutate.
      * If you need extra performance and can guarantee you won't write to the array, you can use the unsafe version.
      *
      * @return a freshly allocated serialized byte array
      */
     public byte[] litecoinSerialize() {
-        byte[] bytes = unsafeLitecoinSerialize();
+        byte[] bytes = unsafelitecoinSerialize();
         byte[] copy = new byte[bytes.length];
         System.arraycopy(bytes, 0, copy, 0, bytes.length);
         return copy;
     }
 
     /**
-     * Serialize this message to a byte array that conforms to the bitcoin wire protocol.
+     * Serialize this message to a byte array that conforms to the litecoin wire protocol.
      * <br/>
      * This method may return the original byte array used to construct this message if the
      * following conditions are met:
@@ -306,7 +306,7 @@ public abstract class Message implements Serializable {
      *
      * @return a byte array owned by this object, do NOT mutate it.
      */
-    public byte[] unsafeLitecoinSerialize() {
+    public byte[] unsafelitecoinSerialize() {
         // 1st attempt to use a cached array.
         if (bytes != null) {
             if (offset == 0 && length == bytes.length) {
@@ -353,7 +353,7 @@ public abstract class Message implements Serializable {
     }
 
     /**
-     * Serialize this message to the provided OutputStream using the bitcoin wire format.
+     * Serialize this message to the provided OutputStream using the litecoin wire format.
      *
      * @param stream
      * @throws IOException

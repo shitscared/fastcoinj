@@ -3,7 +3,7 @@ target
 .classpath
 .settings
 .idea
-
+*.DS_Store
 *.jar
 
 *.blockchain

@@ -183,7 +183,7 @@ public class DiskBlockStore implements BlockStore {
             Sha256Hash hash = block.getHeader().getHash();
             checkState(blockMap.get(hash) == null, "Attempt to insert duplicate");
             // Append to the end of the file. The other fields in StoredBlock will be recalculated when it's reloaded.
-            byte[] bytes = block.getHeader().bitcoinSerialize();
+            byte[] bytes = block.getHeader().litecoinSerialize();
             file.write(bytes);
             blockMap.put(hash, block);
         } catch (IOException e) {

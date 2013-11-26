@@ -141,9 +141,9 @@ public class BloomFilter extends Message {
     }
     
     /**
-     * Serializes this message to the provided stream. If you just want the raw bytes use bitcoinSerialize().
+     * Serializes this message to the provided stream. If you just want the raw bytes use litecoinSerialize().
      */
-    void bitcoinSerializeToStream(OutputStream stream) throws IOException {
+    void litecoinSerializeToStream(OutputStream stream) throws IOException {
         stream.write(new VarInt(data.length).encode());
         stream.write(data);
         Utils.uint32ToByteStreamLE(hashFuncs, stream);

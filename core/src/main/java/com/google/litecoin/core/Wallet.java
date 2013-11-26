@@ -2719,7 +2719,7 @@ public class Wallet implements Serializable, BlockChainListener {
 
                     // Check that the encrypted key can be successfully decrypted.
                     // This is done as it is a critical failure if the private key cannot be decrypted successfully
-                    // (all bitcoin controlled by that private key is lost forever).
+                    // (all litecoin controlled by that private key is lost forever).
                     // For a correctly constructed keyCrypter the encryption should always be reversible so it is just being as cautious as possible.
                     if (!ECKey.encryptionIsReversible(key, encryptedKey, keyCrypter, aesKey)) {
                         // Abort encryption
@@ -2989,7 +2989,8 @@ public class Wallet implements Serializable, BlockChainListener {
      * 
      * This is used to generate a BloomFilter which can be #{link BloomFilter.merge}d with another.
      * It could also be used if you have a specific target for the filter's size.
-     *
+     * 
+     * See the docs for {@link BloomFilter#BloomFilter(int, double)} for a brief explanation of anonymity when using bloom filters.
      */
     public BloomFilter getBloomFilter(int size, double falsePositiveRate, long nTweak) {
         BloomFilter filter = new BloomFilter(size, falsePositiveRate, nTweak);

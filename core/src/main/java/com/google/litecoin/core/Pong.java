@@ -43,7 +43,7 @@ public class Pong extends Message {
         length = 8;
     }
     
-    public void bitcoinSerializeToStream(OutputStream stream) throws IOException {
+    public void litecoinSerializeToStream(OutputStream stream) throws IOException {
         Utils.int64ToByteStreamLE(nonce, stream);
     }
     

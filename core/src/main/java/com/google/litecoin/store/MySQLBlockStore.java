@@ -182,7 +182,7 @@ public class MySQLBlockStore implements BlockStore {
             s.setBytes(1, stored.getHeader().getHash().getBytes());
             s.setBytes(2, stored.getChainWork().toByteArray());
             s.setLong(3, stored.getHeight());
-            s.setBytes(4, stored.getHeader().unsafeLitecoinSerialize());
+            s.setBytes(4, stored.getHeader().unsafelitecoinSerialize());
             s.executeUpdate();
             s.close();
             startCommitter();

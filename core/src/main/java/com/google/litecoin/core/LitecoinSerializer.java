@@ -30,7 +30,7 @@ import java.util.Map;
 import static com.google.litecoin.core.Utils.*;
 
 /**
- * <p>Methods to serialize and de-serialize messages to the Litecoin network format as defined in
+ * <p>Methods to serialize and de-serialize messages to the Bitcoin network format as defined in
  * <a href="https://en.litecoin.it/wiki/Protocol_specification">the protocol specification</a>.</p>
  *
  * <p>To be able to serialize and deserialize new Message subclasses the following criteria needs to be met.</p>
@@ -149,7 +149,7 @@ public class LitecoinSerializer {
      * Reads a message from the given InputStream and returns it.
      */
     public Message deserialize(InputStream in) throws ProtocolException, IOException {
-        // A Litecoin protocol message has the following format.
+        // A Bitcoin protocol message has the following format.
         //
         //   - 4 byte magic number: 0xfabfb5da for the testnet or
         //                          0xf9beb4d9 for production
@@ -164,7 +164,7 @@ public class LitecoinSerializer {
         // Satoshi's implementation ignores garbage before the magic header bytes. We have to do the same because
         // sometimes it sends us stuff that isn't part of any message.
         seekPastMagicBytes(in);
-        LitecoinPacketHeader header = new LitecoinPacketHeader(in);
+        BitcoinPacketHeader header = new BitcoinPacketHeader(in);
         // Now try to read the whole message.
         return deserializePayload(header, in);
     }
@@ -173,15 +173,15 @@ public class LitecoinSerializer {
      * Deserializes only the header in case packet meta data is needed before decoding
      * the payload. This method assumes you have already called seekPastMagicBytes()
      */
-    public LitecoinPacketHeader deserializeHeader(InputStream in) throws ProtocolException, IOException {
-        return new LitecoinPacketHeader(in);
+    public BitcoinPacketHeader deserializeHeader(InputStream in) throws ProtocolException, IOException {
+        return new BitcoinPacketHeader(in);
     }
 
     /**
      * Deserialize payload only.  You must provide a header, typically obtained by calling
      * {@link LitecoinSerializer#deserializeHeader}.
      */
-    public Message deserializePayload(LitecoinPacketHeader header, InputStream in) throws ProtocolException, IOException {
+    public Message deserializePayload(BitcoinPacketHeader header, InputStream in) throws ProtocolException, IOException {
         int readCursor = 0;
         byte[] payloadBytes = new byte[header.size];
         while (readCursor < payloadBytes.length - 1) {
@@ -302,13 +302,13 @@ public class LitecoinSerializer {
     }
 
 
-    public static class LitecoinPacketHeader {
+    public static class BitcoinPacketHeader {
         public final byte[] header;
         public final String command;
         public final int size;
         public final byte[] checksum;
 
-        public LitecoinPacketHeader(InputStream in) throws ProtocolException, IOException {
+        public BitcoinPacketHeader(InputStream in) throws ProtocolException, IOException {
             header = new byte[COMMAND_LEN + 4 + 4];
             int readCursor = 0;
             while (readCursor < header.length) {
