@@ -20,21 +20,21 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <parent>
         <groupId>com.google</groupId>
-        <artifactId>litecoinj-parent</artifactId>
+        <artifactId>fastcoinj-parent</artifactId>
         <version>0.8-SNAPSHOT</version>
     </parent>
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>com.google</groupId>
-    <artifactId>litecoinj-examples</artifactId>
+    <artifactId>fastcoinj-examples</artifactId>
 
-    <name>litecoinj Examples</name>
-    <description>A collection of examples using the litecoinj library</description>
+    <name>fastcoinj Examples</name>
+    <description>A collection of examples using the fastcoinj library</description>
 
     <dependencies>
         <dependency>
             <groupId>com.google</groupId>
-            <artifactId>litecoinj</artifactId>
+            <artifactId>fastcoinj</artifactId>
             <version>${project.parent.version}</version>
         </dependency>
         <dependency>
