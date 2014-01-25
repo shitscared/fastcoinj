@@ -375,4 +375,15 @@ public class TransactionInput extends ChildMessage implements Serializable {
         int myIndex = parentTransaction.getInputs().indexOf(this);
         sig.correctlySpends(parentTransaction, myIndex, pubKey, true);
     }
+
+
+    /**
+     * Returns the connected output, assuming the input was connected with
+     * {@link TransactionInput#connect(TransactionOutput)} or variants at some point. If it wasn't connected, then
+     * this method returns null.
+     */
+    public TransactionOutput getConnectedOutput() {
+        return getOutpoint().getConnectedOutput();
+    }
+
 }

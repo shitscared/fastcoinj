@@ -17,7 +17,13 @@
 package com.google.fastcoin.core;
 
 import com.google.fastcoin.core.TransactionConfidence.ConfidenceType;
+/*
+import com.google.fastcoin.script.Script;
+import com.google.fastcoin.script.ScriptBuilder;
+import com.google.fastcoin.script.ScriptOpCodes;
+*/
 import com.google.common.base.Preconditions;
+import org.multibit.IsMultiBitClass;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.spongycastle.crypto.params.KeyParameter;
@@ -44,7 +50,7 @@ import static com.google.fastcoin.core.Utils.*;
  * sense for selling MP3s might not make sense for selling cars, or accepting payments from a family member. If you
  * are building a wallet, how to present confidence to your users is something to consider carefully.</p>
  */
-public class Transaction extends ChildMessage implements Serializable {
+public class Transaction extends ChildMessage implements Serializable, IsMultiBitClass {
     private static final Logger log = LoggerFactory.getLogger(Transaction.class);
     private static final long serialVersionUID = -8567546957352643140L;
     
@@ -54,8 +60,17 @@ public class Transaction extends ChildMessage implements Serializable {
     /** How many bytes a transaction can be before it won't be relayed anymore. */
     public static final int MAX_STANDARD_TX_SIZE = 100 * 1024;
 
+    /** If fee is lower than this value (in satoshis), a default reference client will treat it as if there were no fee */
+    public static final BigInteger REFERENCE_DEFAULT_MIN_TX_FEE = BigInteger.valueOf(10000);
 
-    // These are serialized in both fastcoin and java serialization.
+    /**
+     * Any standard (ie pay-to-address) output smaller than this value (in satoshis) will most likely be rejected by the network.
+     * This is calculated by assuming a standard output will be 34 bytes, and then using the formula used in
+     * {@link TransactionOutput#getMinNonDustValue(BigInteger)}.
+     */
+    public static final BigInteger MIN_NONDUST_OUTPUT = BigInteger.valueOf(5460);
+
+    // These are serialized in both bitcoin and java serialization.
     private long version;
     private ArrayList<TransactionInput> inputs;
 
@@ -153,6 +168,7 @@ public class Transaction extends ChildMessage implements Serializable {
     /**
      * Returns the transaction hash as you see them in the block explorer.
      */
+    @Override
     public Sha256Hash getHash() {
         if (hash == null) {
             byte[] bits = fastcoinSerialize();
@@ -162,7 +178,7 @@ public class Transaction extends ChildMessage implements Serializable {
     }
 
     /**
-     * Used by FastcoinSerializer.  The serializer has to calculate a hash for checksumming so to
+     * Used by BitcoinSerializer.  The serializer has to calculate a hash for checksumming so to
      * avoid wasting the considerable effort a set method is provided so the serializer can set it.
      *
      * No verification is performed on this hash.
@@ -234,7 +250,7 @@ public class Transaction extends ChildMessage implements Serializable {
      * @return true if this transaction hasn't been seen in any block yet.
      */
     public boolean isPending() {
-        return getConfidence().getConfidenceType() == TransactionConfidence.ConfidenceType.NOT_SEEN_IN_CHAIN;
+        return getConfidence().getConfidenceType() == ConfidenceType.NOT_SEEN_IN_CHAIN;
     }
 
     /**
@@ -262,20 +278,14 @@ public class Transaction extends ChildMessage implements Serializable {
             // This can cause event listeners on TransactionConfidence to run. After these lines complete, the wallets
             // state may have changed!
             TransactionConfidence transactionConfidence = getConfidence();
-            transactionConfidence.setAppearedAtChainHeight(block.getHeight());
-
-            // Reset the confidence block depth.
-            transactionConfidence.setDepthInBlocks(1);
-
             // Reset the work done.
             try {
                 transactionConfidence.setWorkDone(block.getHeader().getWork());
             } catch (VerificationException e) {
                 throw new RuntimeException(e);  // Cannot happen.
             }
-
-            // The transaction is now on the best chain.
-            transactionConfidence.setConfidenceType(ConfidenceType.BUILDING);
+            // This sets type to BUILDING and depth to one.
+            transactionConfidence.setAppearedAtChainHeight(block.getHeight());
         }
     }
 
@@ -284,14 +294,6 @@ public class Transaction extends ChildMessage implements Serializable {
             appearsInHashes = new HashSet<Sha256Hash>();
         }
         appearsInHashes.add(blockHash);
-    }
-
-    /** Called by the wallet once a re-org means we don't appear in the best chain anymore. */
-    void notifyNotOnBestChain() {
-        TransactionConfidence transactionConfidence = getConfidence();
-        transactionConfidence.setConfidenceType(TransactionConfidence.ConfidenceType.NOT_IN_BEST_CHAIN);
-        transactionConfidence.setDepthInBlocks(0);
-        transactionConfidence.setWorkDone(BigInteger.ZERO);
     }
 
     /**
@@ -417,12 +419,15 @@ public class Transaction extends ChildMessage implements Serializable {
         NONE,        // 2
         SINGLE,      // 3
     }
+    public static final byte SIGHASH_ANYONECANPAY_VALUE = (byte) 0x80;
 
+    @Override
     protected void unCache() {
         super.unCache();
         hash = null;
     }
 
+    @Override
     protected void parseLite() throws ProtocolException {
 
         //skip this if the length has been provided i.e. the tx is not part of a block
@@ -481,6 +486,7 @@ public class Transaction extends ChildMessage implements Serializable {
         return cursor - offset + 4;
     }
 
+    @Override
     void parse() throws ProtocolException {
 
         if (parsed)
@@ -552,10 +558,15 @@ public class Transaction extends ChildMessage implements Serializable {
         return getConfidence().getDepthInBlocks() >= params.getSpendableCoinbaseDepth();
     }
 
+    @Override
     public String toString() {
         return toString(null);
     }
 
+    /**
+     * A human readable version of the transaction useful for debugging. The format is not guaranteed to be stable.
+     * @param chain If provided, will be used to estimate lock times (if set). Can be null.
+     */
     /**
      * A human readable version of the transaction useful for debugging. The format is not guaranteed to be stable.
      * @param chain If provided, will be used to estimate lock times (if set). Can be null.
@@ -642,50 +653,89 @@ public class Transaction extends ChildMessage implements Serializable {
         return s.toString();
     }
 
+
+    /**
+     * Removes all the inputs from this transaction.
+     * Note that this also invalidates the length attribute
+     */
+    public void clearInputs() {
+        unCache();
+        for (TransactionInput input : inputs) {
+            input.setParent(null);
+        }
+        inputs.clear();
+        // You wanted to reserialize, right?
+        this.length = this.fastcoinSerialize().length;
+    }
+
     /**
      * Adds an input to this transaction that imports value from the given output. Note that this input is NOT
      * complete and after every input is added with addInput() and every output is added with addOutput(),
      * signInputs() must be called to finalize the transaction and finish the inputs off. Otherwise it won't be
-     * accepted by the network.
+     * accepted by the network. Returns the newly created input.
      */
-    public void addInput(TransactionOutput from) {
-        addInput(new TransactionInput(params, this, from));
+    public TransactionInput addInput(TransactionOutput from) {
+        return addInput(new TransactionInput(params, this, from));
     }
 
     /**
-     * Adds an input directly, with no checking that it's valid.
+     * Adds an input directly, with no checking that it's valid. Returns the new input.
      */
-    public void addInput(TransactionInput input) {
+    public TransactionInput addInput(TransactionInput input) {
         unCache();
         input.setParent(this);
         inputs.add(input);
         adjustLength(inputs.size(), input.length);
+        return input;
     }
 
     /**
-     * Adds the given output to this transaction. The output must be completely initialized.
+     * Removes all the inputs from this transaction.
+     * Note that this also invalidates the length attribute
      */
-    public void addOutput(TransactionOutput to) {
+    public void clearOutputs() {
+        unCache();
+        for (TransactionOutput output : outputs) {
+            output.setParent(null);
+        }
+        outputs.clear();
+        // You wanted to reserialize, right?
+        this.length = this.fastcoinSerialize().length;
+    }
+
+    /**
+     * Adds the given output to this transaction. The output must be completely initialized. Returns the given output.
+     */
+    public TransactionOutput addOutput(TransactionOutput to) {
         unCache();
         to.setParent(this);
         outputs.add(to);
         adjustLength(outputs.size(), to.length);
+        return to;
     }
 
     /**
-     * Creates an output based on the given address and value, adds it to this transaction.
+     * Creates an output based on the given address and value, adds it to this transaction, and returns the new output.
      */
-    public void addOutput(BigInteger value, Address address) {
-        addOutput(new TransactionOutput(params, this, value, address));
+    public TransactionOutput addOutput(BigInteger value, Address address) {
+        return addOutput(new TransactionOutput(params, this, value, address));
     }
 
     /**
-     * Creates an output that pays to the given pubkey directly (no address) with the given value, and adds it to this
-     * transaction.
+     * Creates an output that pays to the given pubkey directly (no address) with the given value, adds it to this
+     * transaction, and returns the new output.
      */
-    public void addOutput(BigInteger value, ECKey pubkey) {
-        addOutput(new TransactionOutput(params, this, value, pubkey));
+    public TransactionOutput addOutput(BigInteger value, ECKey pubkey) {
+        return addOutput(new TransactionOutput(params, this, value, pubkey));
     }
+
+    /**
+     * Creates an output that pays to the given script. The address and key forms are specialisations of this method,
+     * you won't normally need to use it unless you're doing unusual things.
+     */
+   // public TransactionOutput addOutput(BigInteger value, Script script) {
+   //     return addOutput(new TransactionOutput(params, this, value, script.getProgram()));
+   // }
 
     /**
      * Once a transaction has some inputs and outputs added, the signatures in the inputs can be calculated. The
@@ -702,14 +752,12 @@ public class Transaction extends ChildMessage implements Serializable {
     }
 
     /**
-     * Once a transaction has some inputs and outputs added, the signatures in the inputs can be calculated. The
+     * <p>Once a transaction has some inputs and outputs added, the signatures in the inputs can be calculated. The
      * signature is over the transaction itself, to prove the redeemer actually created that transaction,
-     * so we have to do this step last.<p>
-     * <p/>
-     * This method is similar to SignatureHash in script.cpp
+     * so we have to do this step last.</p>
      *
      * @param hashType This should always be set to SigHash.ALL currently. Other types are unused.
-     * @param wallet   A wallet is required to fetch the keys needed for signing.
+     * @param wallet  A wallet is required to fetch the keys needed for signing.
      * @param aesKey The AES key to use to decrypt the key before signing. Null if no decryption is required.
      */
     public synchronized void signInputs(SigHash hashType, Wallet wallet, KeyParameter aesKey) throws ScriptException {
@@ -736,7 +784,7 @@ public class Transaction extends ChildMessage implements Serializable {
             ECKey key = input.getOutpoint().getConnectedKey(wallet);
             // This assert should never fire. If it does, it means the wallet is inconsistent.
             Preconditions.checkNotNull(key, "Transaction exists in wallet that we cannot redeem: %s",
-                                       input.getOutpoint().getHash());
+                    input.getOutpoint().getHash());
             // Keep the key around for the script creation step below.
             signingKeys[i] = key;
             // The anyoneCanPay feature isn't used at the moment.
@@ -782,35 +830,53 @@ public class Transaction extends ChildMessage implements Serializable {
     }
 
     /**
-     * Calculates a signature hash, that is, a hash of a simplified form of the transaction. How exactly the transaction
-     * is simplified is specified by the type and anyoneCanPay parameters.<p>
+     * <p>Calculates a signature hash, that is, a hash of a simplified form of the transaction. How exactly the transaction
+     * is simplified is specified by the type and anyoneCanPay parameters.</p>
      *
-     * You don't normally ever need to call this yourself. It will become more useful in future as the contracts
-     * features of Bitcoin are developed.
+     * <p>You don't normally ever need to call this yourself. It will become more useful in future as the contracts
+     * features of Bitcoin are developed.</p>
      *
      * @param inputIndex input the signature is being calculated for. Tx signatures are always relative to an input.
      * @param connectedScript the bytes that should be in the given input during signing.
      * @param type Should be SigHash.ALL
      * @param anyoneCanPay should be false.
-     * @throws ScriptException if connectedScript is invalid
      */
     public synchronized Sha256Hash hashTransactionForSignature(int inputIndex, byte[] connectedScript,
-                                                               SigHash type, boolean anyoneCanPay) throws ScriptException {
-        return hashTransactionForSignature(inputIndex, connectedScript, (byte)((type.ordinal() + 1) | (anyoneCanPay ? 0x80 : 0x00)));
+                                                               SigHash type, boolean anyoneCanPay) {
+        return hashTransactionForSignature(inputIndex, connectedScript, (byte)((type.ordinal() + 1) | (anyoneCanPay ? SIGHASH_ANYONECANPAY_VALUE : 0x00)));
     }
-    
+
+    /**
+     * <p>Calculates a signature hash, that is, a hash of a simplified form of the transaction. How exactly the transaction
+     * is simplified is specified by the type and anyoneCanPay parameters.</p>
+     *
+     * <p>You don't normally ever need to call this yourself. It will become more useful in future as the contracts
+     * features of Bitcoin are developed.</p>
+     *
+     * @param inputIndex input the signature is being calculated for. Tx signatures are always relative to an input.
+     * @param connectedScript the script that should be in the given input during signing.
+     * @param type Should be SigHash.ALL
+     * @param anyoneCanPay should be false.
+     */
+/*
+    public synchronized Sha256Hash hashTransactionForSignature(int inputIndex, Script connectedScript,
+                                                               SigHash type, boolean anyoneCanPay) {
+        return hashTransactionForSignature(inputIndex, connectedScript.getProgram(),
+                (byte)((type.ordinal() + 1) | (anyoneCanPay ? SIGHASH_ANYONECANPAY_VALUE : 0x00)));
+    }
+  */
     /**
      * This is required for signatures which use a sigHashType which cannot be represented using SigHash and anyoneCanPay
      * See transaction c99c49da4c38af669dea436d3e73780dfdb6c1ecf9958baa52960e8baee30e73, which has sigHashType 0
      */
-    synchronized Sha256Hash hashTransactionForSignature(int inputIndex, byte[] connectedScript,
-            byte sigHashType) throws ScriptException {
+    public synchronized Sha256Hash hashTransactionForSignature(int inputIndex, byte[] connectedScript,
+            byte sigHashType) {
         // TODO: This whole separate method should be un-necessary if we fix how we deserialize sighash flags.
 
         // The SIGHASH flags are used in the design of contracts, please see this page for a further understanding of
         // the purposes of the code in this method:
         //
-        //   https://en.fastcoin.it/wiki/Contracts
+        //   https://en.bitcoin.it/wiki/Contracts
 
         try {
             // Store all the input scripts and clear them in preparation for signing. If we're signing a fresh
@@ -881,7 +947,7 @@ public class Transaction extends ChildMessage implements Serializable {
             }
             
             ArrayList<TransactionInput> inputs = this.inputs;
-            if ((sigHashType & 0x80) == 0x80) {
+            if ((sigHashType & SIGHASH_ANYONECANPAY_VALUE) == SIGHASH_ANYONECANPAY_VALUE) {
                 // SIGHASH_ANYONECANPAY means the signature in the input is not broken by changes/additions/removals
                 // of other inputs. For example, this is useful for building assurance contracts.
                 this.inputs = new ArrayList<TransactionInput>();
@@ -910,8 +976,9 @@ public class Transaction extends ChildMessage implements Serializable {
         }
     }
 
+    /*
     @Override
-    protected void fastcoinSerializeToStream(OutputStream stream) throws IOException {
+    protected void bitcoinSerializeToStream(OutputStream stream) throws IOException {
         uint32ToByteStreamLE(version, stream);
         stream.write(new VarInt(inputs.size()).encode());
         for (TransactionInput in : inputs)
@@ -920,11 +987,14 @@ public class Transaction extends ChildMessage implements Serializable {
         for (TransactionOutput out : outputs)
             out.fastcoinSerialize(stream);
         uint32ToByteStreamLE(lockTime, stream);
-    }
+    } */
 
 
     /**
-     * @return the lockTime
+     * Transactions can have an associated lock time, specified either as a block height or in seconds since the
+     * UNIX epoch. A transaction is not allowed to be confirmed by miners until the lock time is reached, and
+     * since Bitcoin 0.8+ a transaction that did not end its lock period (non final) is considered to be non
+     * standard and won't be relayed or included in the memory pool either.
      */
     public long getLockTime() {
         maybeParse();
@@ -932,10 +1002,14 @@ public class Transaction extends ChildMessage implements Serializable {
     }
 
     /**
-     * @param lockTime the lockTime to set
+     * Transactions can have an associated lock time, specified either as a block height or in seconds since the
+     * UNIX epoch. A transaction is not allowed to be confirmed by miners until the lock time is reached, and
+     * since Bitcoin 0.8+ a transaction that did not end its lock period (non final) is considered to be non
+     * standard and won't be relayed or included in the memory pool either.
      */
     public void setLockTime(long lockTime) {
         unCache();
+        // TODO: Consider checking that at least one input has a non-final sequence number.
         this.lockTime = lockTime;
     }
 
@@ -947,17 +1021,13 @@ public class Transaction extends ChildMessage implements Serializable {
         return version;
     }
 
-    /**
-     * @return a read-only list of the inputs of this transaction.
-     */
+    /** Returns an unmodifiable view of all inputs. */
     public List<TransactionInput> getInputs() {
         maybeParse();
         return Collections.unmodifiableList(inputs);
     }
 
-    /**
-     * @return a read-only list of the outputs of this transaction.
-     */
+    /** Returns an unmodifiable view of all outputs. */
     public List<TransactionOutput> getOutputs() {
         maybeParse();
         return Collections.unmodifiableList(outputs);
@@ -1010,6 +1080,56 @@ public class Transaction extends ChildMessage implements Serializable {
     }
 
     /**
+     * returns whether this transaction was sent by this wallet
+     * 
+     * @param wallet
+     * @return
+     */
+    public boolean sent(Wallet wallet) {
+        for (TransactionInput in : inputs) {
+            if (isTransactionInputMine(in, wallet)) {
+                return true;
+            }
+        }
+        return false;
+    }
+    
+    /** Determine whether the transaction input is in the wallet */
+    public boolean isTransactionInputMine(TransactionInput transactionInput, Wallet wallet) {
+        try {
+            byte[] pubkey = transactionInput.getScriptSig().getPubKey();
+            return wallet.isPubKeyMine(pubkey);
+        } catch (ScriptException e) {
+            return false;
+        }
+    }
+
+    /**
+     * returns whether this transaction uses one of the wallet's keys
+     * 
+     * @param wallet
+     * @return
+     */
+    public boolean isMine(Wallet wallet) {
+        for (TransactionOutput output : this.outputs) {
+            // This is not thread safe as a key could be removed between the
+            // call to isMine and receive.
+            if (output.isMine(wallet)) {
+                return true;
+            }
+        }
+
+        for (TransactionInput input : this.inputs) {
+            // This is not thread safe as a key could be removed between the
+            // call to isPubKeyMine and receive.
+            if (isTransactionInputMine(input, wallet)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /*
      * Gets the count of regular SigOps in this transactions
      */
     public int getSigOpCount() throws ScriptException {
@@ -1055,25 +1175,36 @@ public class Transaction extends ChildMessage implements Serializable {
     }
 
     /**
+     * <p>A transaction is time locked if at least one of its inputs is non-final and it has a lock time</p>
+     *
+     * <p>To check if this transaction is final at a given height and time, see {@link Transaction#isFinal(int, long)}
+     * </p>
+     */
+    public boolean isTimeLocked() {
+        if (getLockTime() == 0)
+            return false;
+        for (TransactionInput input : getInputs())
+            if (input.hasSequence())
+                return true;
+        return false;
+    }
+
+    /**
      * <p>Returns true if this transaction is considered finalized and can be placed in a block. Non-finalized
      * transactions won't be included by miners and can be replaced with newer versions using sequence numbers.
-     * This is useful in certain types of <a href="http://en.fastcoin.it/wiki/Contracts">contracts</a>, such as
+     * This is useful in certain types of <a href="http://en.bitcoin.it/wiki/Contracts">contracts</a>, such as
      * micropayment channels.</p>
      *
      * <p>Note that currently the replacement feature is disabled in the Satoshi client and will need to be
      * re-activated before this functionality is useful.</p>
      */
     public boolean isFinal(int height, long blockTimeSeconds) {
-        // Time based nLockTime implemented in 0.1.6
         long time = getLockTime();
-        if (time == 0)
-            return true;
         if (time < (time < LOCKTIME_THRESHOLD ? height : blockTimeSeconds))
             return true;
-        for (TransactionInput in : inputs)
-            if (in.hasSequence())
-                return false;
-        return true;
+        if (!isTimeLocked())
+            return true;
+        return false;
     }
 
     /**
@@ -1099,4 +1230,80 @@ public class Transaction extends ChildMessage implements Serializable {
         else
             return new Date(getLockTime()*1000);
     }
+
+    /**
+     * Make the TransactionOutputs spendable This is used in an intrawallet
+     * transfer as what is spent from the senders's perspetive is avaiable to
+     * spend from the recipients.
+     */
+    public void markOutputsAsSpendable() {
+        if (outputs != null) {
+            for (TransactionOutput output : outputs) {
+                if (output != null) {
+                    output.markAsUnspent();
+                }
+            }
+        }
+    }
+    
+    /**
+     * Calculate the fee for a spend
+     * @param transaction Must be a spend as for a receive we do not have the connected output
+     * @return BigInteger containing fee
+     */
+    public BigInteger calculateFee(Wallet wallet) {
+        BigInteger totalOut = BigInteger.ZERO;    
+        BigInteger totalIn = BigInteger.ZERO;
+        for (TransactionInput input : getInputs()) {
+            // This input is taking value from an transaction in our wallet. To
+            // discover the value,
+            // we must find the connected transaction.
+            TransactionOutput connected = input.getConnectedOutput(wallet.unspent);
+            if (connected == null)
+                connected = input.getConnectedOutput(wallet.spent);
+            if (connected == null)
+                connected = input.getConnectedOutput(wallet.pending);
+            if (connected == null)
+                continue;
+            totalIn = totalIn.add(connected.getValue());
+        }
+        List<TransactionOutput> outputs = getOutputs();
+        for (TransactionOutput output : outputs) {
+            totalOut = totalOut.add(output.getValue());
+        }
+        
+        return totalIn.subtract(totalOut);
+    }
+    
+    /**
+     * Calculates the sum of the inputs that are spending coins with keys in the
+     * wallet. This requires the transactions sending coins to those keys to be
+     * in the wallet. This method will not attempt to download the blocks
+     * containing the input transactions if the key is in the wallet but the
+     * transactions are not.
+     * 
+     * This variant includes the change
+     * 
+     * @return sum in nanocoins.
+     */
+    public BigInteger getValueSentFromMeIncludingChange(Wallet wallet) throws ScriptException {
+        maybeParse();
+        // This is tested in WalletTest.
+        BigInteger v = BigInteger.ZERO;
+        for (TransactionInput input : inputs) {
+            // This input is taking value from an transaction in our wallet. To
+            // discover the value,
+            // we must find the connected transaction.
+            TransactionOutput connected = input.getConnectedOutput(wallet.unspent);
+            if (connected == null)
+                connected = input.getConnectedOutput(wallet.spent);
+            if (connected == null)
+                connected = input.getConnectedOutput(wallet.pending);
+            if (connected == null)
+                continue;
+            v = v.add(connected.getValue());
+        }
+        return v;
+    }
 }
+

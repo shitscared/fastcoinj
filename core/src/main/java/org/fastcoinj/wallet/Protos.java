@@ -2893,14 +2893,14 @@ public final class Protos {
         implements com.google.protobuf.ProtocolMessageEnum {
       UNKNOWN(0, 0),
       BUILDING(1, 1),
-      NOT_SEEN_IN_CHAIN(2, 2),
+      PENDING(2, 2),
       NOT_IN_BEST_CHAIN(3, 3),
       DEAD(4, 4),
       ;
       
       public static final int UNKNOWN_VALUE = 0;
       public static final int BUILDING_VALUE = 1;
-      public static final int NOT_SEEN_IN_CHAIN_VALUE = 2;
+      public static final int PENDING_VALUE = 2;
       public static final int NOT_IN_BEST_CHAIN_VALUE = 3;
       public static final int DEAD_VALUE = 4;
       
@@ -2911,7 +2911,7 @@ public final class Protos {
         switch (value) {
           case 0: return UNKNOWN;
           case 1: return BUILDING;
-          case 2: return NOT_SEEN_IN_CHAIN;
+          case 2: return PENDING;
           case 3: return NOT_IN_BEST_CHAIN;
           case 4: return DEAD;
           default: return null;
@@ -2944,7 +2944,7 @@ public final class Protos {
       }
       
       private static final Type[] VALUES = {
-        UNKNOWN, BUILDING, NOT_SEEN_IN_CHAIN, NOT_IN_BEST_CHAIN, DEAD, 
+        UNKNOWN, BUILDING, PENDING, NOT_IN_BEST_CHAIN, DEAD,
       };
       
       public static Type valueOf(
@@ -8323,7 +8323,7 @@ public final class Protos {
       "\022)\n\014broadcast_by\030\006 \003(\0132\023.wallet.PeerAddr" +
       "ess\0224\n\006source\030\007 \001(\0162$.wallet.Transaction" +
       "Confidence.Source\"Y\n\004Type\022\013\n\007UNKNOWN\020\000\022\014" +
-      "\n\010BUILDING\020\001\022\025\n\021NOT_SEEN_IN_CHAIN\020\002\022\025\n\021N" +
+      "\n\010BUILDING\020\001\022\025\n\021PENDING\020\002\022\025\n\021N" +
       "OT_IN_BEST_CHAIN\020\003\022\010\n\004DEAD\020\004\"A\n\006Source\022\022" +
       "\n\016SOURCE_UNKNOWN\020\000\022\022\n\016SOURCE_NETWORK\020\001\022\017" +
       "\n\013SOURCE_SELF\020\002\"\211\003\n\013Transaction\022\017\n\007versi" +
