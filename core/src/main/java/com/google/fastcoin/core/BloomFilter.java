@@ -17,11 +17,12 @@
 package com.google.fastcoin.core;
 
 import com.google.common.base.Objects;
-import com.google.common.base.Preconditions;
 
 import java.io.IOException;
 import java.io.OutputStream;
 import java.util.Arrays;
+
+import static com.google.common.base.Preconditions.checkArgument;
 
 /**
  * <p>A Bloom filter is a probabilistic data structure which can be sent to another client so that it can avoid
@@ -128,15 +129,11 @@ public class BloomFilter extends Message {
         data = readByteArray();
         if (data.length > MAX_FILTER_SIZE)
             throw new ProtocolException ("Bloom filter out of size range.");
-        
         hashFuncs = readUint32();
         if (hashFuncs > MAX_HASH_FUNCS)
             throw new ProtocolException("Bloom filter hash function count out of range");
-        
         nTweak = readUint32();
-        
         nFlags = readBytes(1)[0];
-
         length = cursor - offset;
     }
     
@@ -156,8 +153,8 @@ public class BloomFilter extends Message {
         // Do nothing, lazy parsing isn't useful for bloom filters.
     }
 
-    private int ROTL32 (int x, int r) {
-      return (x << r) | (x >>> (32 - r));
+    private static int rotateLeft32(int x, int r) {
+        return (x << r) | (x >>> (32 - r));
     }
     
     private int hash(int hashNum, byte[] object) {
@@ -175,11 +172,11 @@ public class BloomFilter extends Message {
                   ((object[i+3] & 0xFF) << 24);
             
             k1 *= c1;
-            k1 = ROTL32(k1,15);
+            k1 = rotateLeft32(k1, 15);
             k1 *= c2;
 
             h1 ^= k1;
-            h1 = ROTL32(h1,13); 
+            h1 = rotateLeft32(h1, 13);
             h1 = h1*5+0xe6546b64;
         }
         
@@ -194,7 +191,7 @@ public class BloomFilter extends Message {
                 // Fall through.
             case 1:
                 k1 ^= (object[numBlocks] & 0xff);
-                k1 *= c1; k1 = ROTL32(k1,15); k1 *= c2; h1 ^= k1;
+                k1 *= c1; k1 = rotateLeft32(k1, 15); k1 *= c2; h1 ^= k1;
                 // Fall through.
             default:
                 // Do nothing.
@@ -233,15 +230,41 @@ public class BloomFilter extends Message {
     }
 
     /**
-     * Copies filter into this.
-     * filter must have the same size, hash function count and nTweak or an exception will be thrown.
+     * Sets this filter to match all objects. A Bloom filter which matches everything may seem pointless, however,
+     * it is useful in order to reduce steady state bandwidth usage when you want full blocks. Instead of receiving
+     * all transaction data twice, you will receive the vast majority of all transactions just once, at broadcast time.
+     * Solved blocks will then be send just as Merkle trees of tx hashes, meaning a constant 32 bytes of data for each
+     * transaction instead of 100-300 bytes as per usual.
+     */
+    public void setMatchAll() {
+        data = new byte[] {(byte) 0xff};
+    }
+
+    /**
+     * Copies filter into this. Filter must have the same size, hash function count and nTweak or an
+     * IllegalArgumentException will be thrown.
      */
     public void merge(BloomFilter filter) {
-        Preconditions.checkArgument(filter.data.length == this.data.length &&
-                filter.hashFuncs == this.hashFuncs &&
-                filter.nTweak == this.nTweak);
-        for (int i = 0; i < data.length; i++)
-            this.data[i] |= filter.data[i];
+        if (!this.matchesAll() && !filter.matchesAll()) {
+            checkArgument(filter.data.length == this.data.length &&
+                          filter.hashFuncs == this.hashFuncs &&
+                          filter.nTweak == this.nTweak);
+            for (int i = 0; i < data.length; i++)
+                this.data[i] |= filter.data[i];
+        } else {
+            this.data = new byte[] {(byte) 0xff};
+        }
+    }
+
+    /**
+     * Returns true if this filter will match anything. See {@link com.google.fastcoin.core.BloomFilter#setMatchAll()}
+     * for when this can be a useful thing to do.
+     */
+    public boolean matchesAll() {
+        for (byte b : data)
+            if (b != (byte) 0xff)
+                return false;
+        return true;
     }
     
     @Override

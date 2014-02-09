@@ -16,6 +16,8 @@
 
 package com.google.fastcoin.core;
 
+import com.google.common.primitives.UnsignedInteger;
+
 import static com.google.fastcoin.core.Utils.isLessThanUnsigned;
 
 /**
@@ -73,7 +75,6 @@ public class VarInt {
      * Gets the minimum encoded size of the given value.
      */
     public static int sizeOf(int value) {
-        // Java doesn't have the actual value of MAX_INT, as all types in Java are signed.
         if (value < 253)
             return 1;
         else if (value < 65536)
@@ -85,28 +86,22 @@ public class VarInt {
      * Gets the minimum encoded size of the given value.
      */
     public static int sizeOf(long value) {
-        // Java doesn't have the actual value of MAX_INT, as all types in Java are signed.
         if (isLessThanUnsigned(value, 253))
             return 1;
         else if (isLessThanUnsigned(value, 65536))
             return 3;  // 1 marker + 2 data bytes
-        else if (isLessThanUnsigned(value, 4294967296L))
+        else if (isLessThanUnsigned(value, UnsignedInteger.MAX_VALUE.longValue()))
             return 5;  // 1 marker + 4 data bytes
         else
             return 9;  // 1 marker + 8 data bytes
     }
 
     public byte[] encode() {
-        return encodeBE();
-    }
-
-
-    public byte[] encodeBE() {
         if (isLessThanUnsigned(value, 253)) {
             return new byte[]{(byte) value};
         } else if (isLessThanUnsigned(value, 65536)) {
             return new byte[]{(byte) 253, (byte) (value), (byte) (value >> 8)};
-        } else if (isLessThanUnsigned(value, 4294967295L)) {
+        } else if (isLessThanUnsigned(value, UnsignedInteger.MAX_VALUE.longValue())) {
             byte[] bytes = new byte[5];
             bytes[0] = (byte) 254;
             Utils.uint32ToByteArrayLE(value, bytes, 1);

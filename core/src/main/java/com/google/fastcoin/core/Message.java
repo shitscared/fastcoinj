@@ -257,7 +257,7 @@ public abstract class Message implements Serializable {
     }
 
     /**
-     * Should only used by FastcoinSerializer for cached checksum
+     * Should only used by BitcoinSerializer for cached checksum
      *
      * @return the checksum
      */
@@ -266,7 +266,7 @@ public abstract class Message implements Serializable {
     }
 
     /**
-     * Should only used by FastcoinSerializer for caching checksum
+     * Should only used by BitcoinSerializer for caching checksum
      *
      * @param checksum the checksum to set
      */
@@ -277,13 +277,13 @@ public abstract class Message implements Serializable {
     }
 
     /**
-     * Returns a copy of the array returned by {@link Message#unsafefastcoinSerialize()}, which is safe to mutate.
+     * Returns a copy of the array returned by {@link Message#unsafeFastcoinSerialize()}, which is safe to mutate.
      * If you need extra performance and can guarantee you won't write to the array, you can use the unsafe version.
      *
      * @return a freshly allocated serialized byte array
      */
     public byte[] fastcoinSerialize() {
-        byte[] bytes = unsafefastcoinSerialize();
+        byte[] bytes = unsafeFastcoinSerialize();
         byte[] copy = new byte[bytes.length];
         System.arraycopy(bytes, 0, copy, 0, bytes.length);
         return copy;
@@ -306,7 +306,7 @@ public abstract class Message implements Serializable {
      *
      * @return a byte array owned by this object, do NOT mutate it.
      */
-    public byte[] unsafefastcoinSerialize() {
+    public byte[] unsafeFastcoinSerialize() {
         // 1st attempt to use a cached array.
         if (bytes != null) {
             if (offset == 0 && length == bytes.length) {
@@ -372,17 +372,15 @@ public abstract class Message implements Serializable {
      * Serializes this message to the provided stream. If you just want the raw bytes use fastcoinSerialize().
      */
     void fastcoinSerializeToStream(OutputStream stream) throws IOException {
-        log.debug("Warning: {} class has not implemented fastcoinSerializeToStream method.  Generating message with no payload", getClass());
+        log.error("Error: {} class has not implemented fastcoinSerializeToStream method.  Generating message with no payload", getClass());
     }
 
     /**
      * This method is a NOP for all classes except Block and Transaction.  It is only declared in Message
-     * so FastcoinSerializer can avoid 2 instanceof checks + a casting.
-     *
-     * @return
+     * so BitcoinSerializer can avoid 2 instanceof checks + a casting.
      */
     public Sha256Hash getHash() {
-        return null;
+        throw new UnsupportedOperationException();
     }
 
     /**
@@ -390,8 +388,6 @@ public abstract class Message implements Serializable {
      * implemented in a subclass of ChildMessage lazy parsing may have no effect.
      *
      * This default implementation is a safe fall back that will ensure it returns a correct value by parsing the message.
-     *
-     * @return
      */
     public int getMessageSize() {
         if (length != UNKNOWN_LENGTH)
@@ -402,79 +398,114 @@ public abstract class Message implements Serializable {
         return length;
     }
 
-    long readUint32() {
-        long u = Utils.readUint32(bytes, cursor);
-        cursor += 4;
-        return u;
+    long readUint32() throws ProtocolException {
+        try {
+            long u = Utils.readUint32(bytes, cursor);
+            cursor += 4;
+            return u;
+        } catch (ArrayIndexOutOfBoundsException e) {
+            throw new ProtocolException(e);
+        }
     }
 
-    Sha256Hash readHash() {
-        byte[] hash = new byte[32];
-        System.arraycopy(bytes, cursor, hash, 0, 32);
-        // We have to flip it around, as it's been read off the wire in little endian.
-        // Not the most efficient way to do this but the clearest.
-        hash = Utils.reverseBytes(hash);
-        cursor += 32;
-        return new Sha256Hash(hash);
+    Sha256Hash readHash() throws ProtocolException {
+        try {
+            byte[] hash = new byte[32];
+            System.arraycopy(bytes, cursor, hash, 0, 32);
+            // We have to flip it around, as it's been read off the wire in little endian.
+            // Not the most efficient way to do this but the clearest.
+            hash = Utils.reverseBytes(hash);
+            cursor += 32;
+            return new Sha256Hash(hash);
+        } catch (IndexOutOfBoundsException e) {
+            throw new ProtocolException(e);
+        }
     }
 
-    long readInt64() {
-        long u = Utils.readInt64(bytes, cursor);
-        cursor += 8;
-        return u;
+    long readInt64() throws ProtocolException {
+        try {
+            long u = Utils.readInt64(bytes, cursor);
+            cursor += 8;
+            return u;
+        } catch (ArrayIndexOutOfBoundsException e) {
+            throw new ProtocolException(e);
+        }
     }
 
-    BigInteger readUint64() {
-        // Java does not have an unsigned 64 bit type. So scrape it off the wire then flip.
-        byte[] valbytes = new byte[8];
-        System.arraycopy(bytes, cursor, valbytes, 0, 8);
-        valbytes = Utils.reverseBytes(valbytes);
-        cursor += valbytes.length;
-        return new BigInteger(valbytes);
+    BigInteger readUint64() throws ProtocolException {
+        try {
+            // Java does not have an unsigned 64 bit type. So scrape it off the wire then flip.
+            byte[] valbytes = new byte[8];
+            System.arraycopy(bytes, cursor, valbytes, 0, 8);
+            valbytes = Utils.reverseBytes(valbytes);
+            cursor += valbytes.length;
+            return new BigInteger(valbytes);
+        } catch (IndexOutOfBoundsException e) {
+            throw new ProtocolException(e);
+        }
     }
 
-    long readVarInt() {
+    long readVarInt() throws ProtocolException {
         return readVarInt(0);
     }
 
-    long readVarInt(int offset) {
-        VarInt varint = new VarInt(bytes, cursor + offset);
-        cursor += offset + varint.getOriginalSizeInBytes();
-        return varint.value;
+    long readVarInt(int offset) throws ProtocolException {
+        try {
+            VarInt varint = new VarInt(bytes, cursor + offset);
+            cursor += offset + varint.getOriginalSizeInBytes();
+            return varint.value;
+        } catch (ArrayIndexOutOfBoundsException e) {
+            throw new ProtocolException(e);
+        }
     }
 
 
-    byte[] readBytes(int length) {
-        byte[] b = new byte[length];
-        System.arraycopy(bytes, cursor, b, 0, length);
-        cursor += length;
-        return b;
+    byte[] readBytes(int length) throws ProtocolException {
+        try {
+            byte[] b = new byte[length];
+            System.arraycopy(bytes, cursor, b, 0, length);
+            cursor += length;
+            return b;
+        } catch (IndexOutOfBoundsException e) {
+            throw new ProtocolException(e);
+        }
     }
     
-    byte[] readByteArray() {
+    byte[] readByteArray() throws ProtocolException {
         long len = readVarInt();
         return readBytes((int)len);
     }
 
-    String readStr() {
-        VarInt varInt = new VarInt(bytes, cursor);
-        if (varInt.value == 0) {
-            cursor += 1;
-            return "";
-        }
-        cursor += varInt.getOriginalSizeInBytes();
-        byte[] characters = new byte[(int) varInt.value];
-        System.arraycopy(bytes, cursor, characters, 0, characters.length);
-        cursor += characters.length;
+    String readStr() throws ProtocolException {
         try {
-            return new String(characters, "UTF-8");
-        } catch (UnsupportedEncodingException e) {
-            throw new RuntimeException(e);  // Cannot happen, UTF-8 is always supported.
+            VarInt varInt = new VarInt(bytes, cursor);
+            if (varInt.value == 0) {
+                cursor += 1;
+                return "";
+            }
+            cursor += varInt.getOriginalSizeInBytes();
+            byte[] characters = new byte[(int) varInt.value];
+            System.arraycopy(bytes, cursor, characters, 0, characters.length);
+            cursor += characters.length;
+            try {
+                return new String(characters, "UTF-8");
+            } catch (UnsupportedEncodingException e) {
+                throw new RuntimeException(e);  // Cannot happen, UTF-8 is always supported.
+            }
+        } catch (ArrayIndexOutOfBoundsException e) {
+            throw new ProtocolException(e);
+        } catch (IndexOutOfBoundsException e) {
+            throw new ProtocolException(e);
         }
     }
     
     boolean hasMoreBytes() {
         return cursor < bytes.length;
+    }
+
+    /** Network parameters this message was created with. */
+    public NetworkParameters getParams() {
+        return params;
     }
 
     public static class LazyParseException extends RuntimeException {

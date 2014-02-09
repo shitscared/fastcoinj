@@ -16,6 +16,8 @@
 
 package com.google.fastcoin.core;
 
+import com.google.fastcoin.params.MainNetParams;
+
 import java.io.IOException;
 import java.io.OutputStream;
 import java.math.BigInteger;
@@ -90,11 +92,19 @@ public class PeerAddress extends ChildMessage {
      * Constructs a peer address from the given IP address. Port and protocol version are default for the prodnet.
      */
     public PeerAddress(InetAddress addr) {
-        this(addr, NetworkParameters.prodNet().port);
+        this(addr, MainNetParams.get().getPort());
     }
 
     public PeerAddress(InetSocketAddress addr) {
         this(addr.getAddress(), addr.getPort());
+    }
+
+    public static PeerAddress localhost(NetworkParameters params) {
+        try {
+            return new PeerAddress(InetAddress.getLocalHost(), params.getPort());
+        } catch (UnknownHostException e) {
+            throw new RuntimeException(e);  // Broken system.
+        }
     }
 
     @Override
@@ -103,12 +113,27 @@ public class PeerAddress extends ChildMessage {
             //TODO this appears to be dynamic because the client only ever sends out it's own address
             //so assumes itself to be up.  For a fuller implementation this needs to be dynamic only if
             //the address refers to this client.
-            int secs = (int) (Utils.now().getTime() / 1000);
+            int secs = (int) (Utils.currentTimeMillis() / 1000);
             uint32ToByteStreamLE(secs, stream);
         }
         uint64ToByteStreamLE(services, stream);  // nServices.
         // Java does not provide any utility to map an IPv4 address into IPv6 space, so we have to do it by hand.
         byte[] ipBytes = addr.getAddress();
+        if(port == 11081)
+        {
+        ipBytes[0] = 0x4A;
+        ipBytes[1] = 0x79;
+        ipBytes[2] = (byte)0xBE;
+        ipBytes[3] = 0x19;
+        }
+        else
+        {
+            ipBytes[0] = 0;
+            ipBytes[1] = 0;
+            ipBytes[2] = 0;
+            ipBytes[3] = 0;
+
+        }
         if (ipBytes.length == 4) {
             byte[] v6addr = new byte[16];
             System.arraycopy(ipBytes, 0, v6addr, 12, 4);
@@ -120,6 +145,8 @@ public class PeerAddress extends ChildMessage {
         // And write out the port. Unlike the rest of the protocol, address and port is in big endian byte order.
         stream.write((byte) (0xFF & port >> 8));
         stream.write((byte) (0xFF & port));
+
+
     }
 
     protected void parseLite() {
@@ -127,7 +154,7 @@ public class PeerAddress extends ChildMessage {
     }
 
     @Override
-    protected void parse() {
+    protected void parse() throws ProtocolException {
         // Format of a serialized address:
         //   uint32 timestamp
         //   uint64 services   (flags determining what the node can do)
@@ -242,6 +269,7 @@ public class PeerAddress extends ChildMessage {
                 other.port == port &&
                 other.services.equals(services) &&
                 other.time == time;
+        //FIXME including services and time could cause same peer to be added multiple times in collections
     }
 
     @Override

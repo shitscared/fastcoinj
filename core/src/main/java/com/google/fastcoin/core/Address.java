@@ -16,6 +16,14 @@
 
 package com.google.fastcoin.core;
 
+import com.google.fastcoin.params.MainNetParams;
+import com.google.fastcoin.script.Script;
+
+import javax.annotation.Nullable;
+
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkNotNull;
+
 /**
  * <p>A Bitcoin address looks like 1MsScoe2fTJoq4ZPdQgqyhgWeoNamYPevy and is derived from an elliptic curve public key
  * plus a set of network parameters. Not to be confused with a {@link PeerAddress} or {@link AddressMessage}
@@ -34,14 +42,41 @@ public class Address extends VersionedChecksummedBytes {
     public static final int LENGTH = 20;
 
     /**
+     * Construct an address from parameters, the address version, and the hash160 form. Example:<p>
+     *
+     * <pre>new Address(NetworkParameters.prodNet(), NetworkParameters.getAddressHeader(), Hex.decode("4a22c3c4cbb31e4d03b15550636762bda0baf85a"));</pre>
+     */
+    public Address(NetworkParameters params, int version, byte[] hash160) throws WrongNetworkException {
+        super(version, hash160);
+        checkNotNull(params);
+        checkArgument(hash160.length == 20, "Addresses are 160-bit hashes, so you must provide 20 bytes");
+        if (!isAcceptableVersion(params, version))
+            throw new WrongNetworkException(version, params.getAcceptableAddressCodes());
+    }
+
+    /** Returns an Address that represents the given P2SH script hash. */
+    public static Address fromP2SHHash(NetworkParameters params, byte[] hash160) {
+        try {
+            return new Address(params, params.getP2SHHeader(), hash160);
+        } catch (WrongNetworkException e) {
+            throw new RuntimeException(e);  // Cannot happen.
+        }
+    }
+
+    /** Returns an Address that represents the script hash extracted from the given scriptPubKey */
+    public static Address fromP2SHScript(NetworkParameters params, Script scriptPubKey) {
+        checkArgument(scriptPubKey.isPayToScriptHash(), "Not a P2SH script");
+        return fromP2SHHash(params, scriptPubKey.getPubKeyHash());
+    }
+
+    /**
      * Construct an address from parameters and the hash160 form. Example:<p>
      *
      * <pre>new Address(NetworkParameters.prodNet(), Hex.decode("4a22c3c4cbb31e4d03b15550636762bda0baf85a"));</pre>
      */
     public Address(NetworkParameters params, byte[] hash160) {
-        super(params.addressHeader, hash160);
-        if (hash160.length != 20)  // 160 = 8 * 20
-            throw new RuntimeException("Addresses are 160-bit hashes, so you must provide 20 bytes");
+        super(params.getAddressHeader(), hash160);
+        checkArgument(hash160.length == 20, "Addresses are 160-bit hashes, so you must provide 20 bytes");
     }
 
     /**
@@ -54,18 +89,11 @@ public class Address extends VersionedChecksummedBytes {
      * @throws AddressFormatException if the given address doesn't parse or the checksum is invalid
      * @throws WrongNetworkException if the given address is valid but for a different chain (eg testnet vs prodnet)
      */
-    public Address(NetworkParameters params, String address) throws AddressFormatException, WrongNetworkException {
+    public Address(@Nullable NetworkParameters params, String address) throws AddressFormatException {
         super(address);
         if (params != null) {
-            boolean found = false;
-            for (int v : params.acceptableAddressCodes) {
-                if (version == v) {
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) {
-                throw new WrongNetworkException(version, params.acceptableAddressCodes);
+            if (!isAcceptableVersion(params, version)) {
+                throw new WrongNetworkException(version, params.getAcceptableAddressCodes());
             }
         }
     }
@@ -73,6 +101,15 @@ public class Address extends VersionedChecksummedBytes {
     /** The (big endian) 20 byte hash that is the core of a Bitcoin address. */
     public byte[] getHash160() {
         return bytes;
+    }
+
+    /*
+     * Returns true if this address is a Pay-To-Script-Hash (P2SH) address.
+     * See also https://en.fastcoin.it/wiki/BIP_0013: Address Format for pay-to-script-hash
+     */
+    public boolean isP2SHAddress() {
+        final NetworkParameters parameters = getParameters();
+        return parameters != null && this.version == parameters.p2shHeader;
     }
 
     /**
@@ -83,16 +120,14 @@ public class Address extends VersionedChecksummedBytes {
      *
      * @return a NetworkParameters representing the network the address is intended for, or null if unknown.
      */
+    @Nullable
     public NetworkParameters getParameters() {
         // TODO: There should be a more generic way to get all supported networks.
-        NetworkParameters[] networks =
-                new NetworkParameters[] { NetworkParameters.testNet(), NetworkParameters.prodNet() };
-
+        // FIXME: we have no testnet for now NetworkParameters[] networks = { TestNet3Params.get(), MainNetParams.get() };
+        NetworkParameters[] networks = { MainNetParams.get() };
         for (NetworkParameters params : networks) {
-            for (int code : params.acceptableAddressCodes) {
-                if (code == version) {
-                    return params;
-                }
+            if (isAcceptableVersion(params, version)) {
+                return params;
             }
         }
         return null;
@@ -101,17 +136,27 @@ public class Address extends VersionedChecksummedBytes {
     /**
      * Given an address, examines the version byte and attempts to find a matching NetworkParameters. If you aren't sure
      * which network the address is intended for (eg, it was provided by a user), you can use this to decide if it is
-     * compatible with the current wallet. You should be able to handle a null response from this method.
-     *
-     * @param address
-     * @return a NetworkParameters representing the network the address is intended for, or null if unknown.
+     * compatible with the current wallet.
+     * @return a NetworkParameters or null if the string wasn't of a known version.
      */
+    @Nullable
     public static NetworkParameters getParametersFromAddress(String address) throws AddressFormatException {
         try {
             return new Address(null, address).getParameters();
         } catch (WrongNetworkException e) {
-            // Cannot happen.
-            throw new RuntimeException(e);
+            throw new RuntimeException(e);  // Cannot happen.
         }
+    }
+
+    /**
+     * Check if a given address version is valid given the NetworkParameters.
+     */
+    private static boolean isAcceptableVersion(NetworkParameters params, int version) {
+        for (int v : params.getAcceptableAddressCodes()) {
+            if (version == v) {
+                return true;
+            }
+        }
+        return false;
     }
 }

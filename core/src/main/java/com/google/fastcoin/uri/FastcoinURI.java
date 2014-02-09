@@ -22,10 +22,10 @@ import com.google.fastcoin.core.Address;
 import com.google.fastcoin.core.AddressFormatException;
 import com.google.fastcoin.core.NetworkParameters;
 import com.google.fastcoin.core.Utils;
-import com.google.common.base.Preconditions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.annotation.Nullable;
 import java.io.UnsupportedEncodingException;
 import java.math.BigInteger;
 import java.net.URI;
@@ -34,9 +34,10 @@ import java.net.URLDecoder;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import static com.google.common.base.Preconditions.checkNotNull;
+
 /**
- * <p>Provides a standard implementation of a Bitcoin URI with support for the
- * following:</p>
+ * <p>Provides a standard implementation of a Bitcoin URI with support for the following:</p>
  *
  * <ul>
  * <li>URLEncoded URIs (as passed in by IE on the command line)</li>
@@ -56,15 +57,12 @@ import java.util.Map;
  * <p>The name/value pairs are processed as follows.</p>
  * <ol>
  * <li>URL encoding is stripped and treated as UTF-8</li>
- * <li>names prefixed with {@code req-} are treated as required and if unknown
- * or conflicting cause a parse exception</li>
- * <li>Unknown names not prefixed with {@code req-} are added to a Map, accessible 
- * by parameter name</li>
- * <li>Known names not prefixed with {@code req-} are processed unless they are
- * malformed</li>
+ * <li>names prefixed with {@code req-} are treated as required and if unknown or conflicting cause a parse exception</li>
+ * <li>Unknown names not prefixed with {@code req-} are added to a Map, accessible by parameter name</li>
+ * <li>Known names not prefixed with {@code req-} are processed unless they are malformed</li>
  * </ol>
  *
- * <p>The following names are known and have the following formats</p>
+ * <p>The following names are known and have the following formats:</p>
  * <ul>
  * <li>{@code amount} decimal value to 8 dp (e.g. 0.12345678) <b>Note that the
  * exponent notation is not supported any more</b></li>
@@ -73,7 +71,7 @@ import java.util.Map;
  * </ul>
  * 
  * @author Andreas Schildbach (initial code)
- * @author Jim Burton (enhancements for MultiBit)
+ * @author Jim Burton (enhancements for FastcoinWallet)
  * @author Gary Rowe (BIP21 support)
  * @see <a href="https://en.fastcoin.it/wiki/BIP_0021">BIP 0021</a>
  */
@@ -89,7 +87,7 @@ public class FastcoinURI {
     public static final String FIELD_AMOUNT = "amount";
     public static final String FIELD_ADDRESS = "address";
 
-    public static final String LITECOIN_SCHEME = "fastcoin";
+    public static final String BITCOIN_SCHEME = "fastcoin";
     private static final String ENCODED_SPACE_CHARACTER = "%20";
     private static final String AMPERSAND_SEPARATOR = "&";
     private static final String QUESTION_MARK_SEPARATOR = "?";
@@ -105,19 +103,21 @@ public class FastcoinURI {
      * @param uri The raw URI data to be parsed (see class comments for accepted formats)
      * @throws FastcoinURIParseException if the URI is not syntactically or semantically valid.
      */
-    public FastcoinURI(String uri) {
+    public FastcoinURI(String uri) throws FastcoinURIParseException {
         this(null, uri);
     }
 
     /**
+     * Constructs a new object by trying to parse the input as a valid Bitcoin URI.
+     *
      * @param params The network parameters that determine which network the URI is from, or null if you don't have
      *               any expectation about what network the URI is for and wish to check yourself.
      * @param input The raw URI data to be parsed (see class comments for accepted formats)
+     *
      * @throws FastcoinURIParseException If the input fails Bitcoin URI syntax and semantic checks.
      */
-    public FastcoinURI(NetworkParameters params, String input) {
-        // Basic validation
-        Preconditions.checkNotNull(input);
+    public FastcoinURI(@Nullable NetworkParameters params, String input) throws FastcoinURIParseException {
+        checkNotNull(input);
         log.debug("Attempting to parse '{}' for {}", input, params == null ? "any" : params.getId());
 
         // Attempt to form the URI (fail fast syntax checking to official standards).
@@ -175,7 +175,7 @@ public class FastcoinURI {
      * @param nameValuePairTokens The tokens representing the name value pairs (assumed to be
      *                            separated by '=' e.g. 'amount=0.2')
      */
-    private void parseParameters(NetworkParameters params, String addressToken, String[] nameValuePairTokens) {
+    private void parseParameters(@Nullable NetworkParameters params, String addressToken, String[] nameValuePairTokens) throws FastcoinURIParseException {
         // Attempt to parse the addressToken as a Bitcoin address for this network
         try {
             Address address = new Address(params, addressToken);
@@ -202,7 +202,9 @@ public class FastcoinURI {
                     BigInteger amount = Utils.toNanoCoins(valueToken);
                     putWithValidation(FIELD_AMOUNT, amount);
                 } catch (NumberFormatException e) {
-                    throw new OptionalFieldValidationException("'" + valueToken + "' value is not a valid amount", e);
+                    throw new OptionalFieldValidationException(String.format("'%s' is not a valid amount", valueToken), e);
+                } catch (ArithmeticException e) {
+                    throw new OptionalFieldValidationException(String.format("'%s' has too many decimal places", valueToken), e);
                 }
             } else {
                 if (nameToken.startsWith("req-")) {
@@ -230,9 +232,9 @@ public class FastcoinURI {
      * @param key The key for the map
      * @param value The value to store
      */
-    private void putWithValidation(String key, Object value) {
+    private void putWithValidation(String key, Object value) throws FastcoinURIParseException {
         if (parameterMap.containsKey(key)) {
-            throw new FastcoinURIParseException("'" + key + "' is duplicated, URI is invalid");
+            throw new FastcoinURIParseException(String.format("'%s' is duplicated, URI is invalid", key));
         } else {
             parameterMap.put(key, value);
         }
@@ -304,14 +306,15 @@ public class FastcoinURI {
      * @param message A message
      * @return A String containing the Bitcoin URI
      */
-    public static String convertToFastcoinURI(String address, BigInteger amount, String label, String message) {
-        Preconditions.checkNotNull(address);
+    public static String convertToFastcoinURI(String address, @Nullable BigInteger amount, @Nullable String label,
+                                               @Nullable String message) {
+        checkNotNull(address);
         if (amount != null && amount.compareTo(BigInteger.ZERO) < 0) {
             throw new IllegalArgumentException("Amount must be positive");
         }
         
         StringBuilder builder = new StringBuilder();
-        builder.append(LITECOIN_SCHEME).append(":").append(address);
+        builder.append(BITCOIN_SCHEME).append(":").append(address);
         
         boolean questionMarkHasBeenOutput = false;
         

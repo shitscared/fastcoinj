@@ -16,26 +16,34 @@
 
 package com.google.fastcoin.core;
 
+import com.google.common.base.Charsets;
+import com.google.common.primitives.UnsignedLongs;
+import com.lambdaworks.crypto.SCrypt;
 import org.spongycastle.crypto.digests.RIPEMD160Digest;
 import org.spongycastle.util.encoders.Hex;
-import com.lambdaworks.crypto.SCrypt;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.math.BigDecimal;
 import java.math.BigInteger;
-import java.nio.charset.Charset;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.Arrays;
 import java.util.Date;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.TimeUnit;
 
 import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.util.concurrent.Uninterruptibles.sleepUninterruptibly;
 
 /**
- * A collection of various utility methods that are helpful for working with the Bitcoin protocol.
- * To enable debug logging from the library, run with -Dbitcoinj.logging=true on your command line.
+ * A collection of various utility methods that are helpful for working with the Fastcoin protocol.
+ * To enable debug logging from the library, run with -Dfastcoinj.logging=true on your command line.
  */
 public class Utils {
+    public static final BigInteger NEGATIVE_ONE = BigInteger.valueOf(-1);
     private static final MessageDigest digest;
     static {
         try {
@@ -45,15 +53,16 @@ public class Utils {
         }
     }
 
-    /** The string that prefixes all text messages signed using Bitcoin keys. */
-    public static final String BITCOIN_SIGNED_MESSAGE_HEADER = "Bitcoin Signed Message:\n";
+    /** The string that prefixes all text messages signed using Fastcoin keys. */
+    public static final String WORLDCOIN_SIGNED_MESSAGE_HEADER = "Fastcoin Signed Message:\n";
+    public static final byte[] WORLDCOIN_SIGNED_MESSAGE_HEADER_BYTES = WORLDCOIN_SIGNED_MESSAGE_HEADER.getBytes(Charsets.UTF_8);
 
     // TODO: Replace this nanocoins business with something better.
 
     /**
-     * How many "nanocoins" there are in a Bitcoin.
+     * How many "nanocoins" there are in a Fastcoin.
      * <p/>
-     * A nanocoin is the smallest unit that can be transferred using Bitcoin.
+     * A nanocoin is the smallest unit that can be transferred using Fastcoin.
      * The term nanocoin is very misleading, though, because there are only 100 million
      * of them in a coin (whereas one would expect 1 billion.
      */
@@ -62,17 +71,21 @@ public class Utils {
     /**
      * How many "nanocoins" there are in 0.01 BitCoins.
      * <p/>
-     * A nanocoin is the smallest unit that can be transferred using Bitcoin.
+     * A nanocoin is the smallest unit that can be transferred using Fastcoin.
      * The term nanocoin is very misleading, though, because there are only 100 million
      * of them in a coin (whereas one would expect 1 billion).
      */
     public static final BigInteger CENT = new BigInteger("1000000", 10);
+    private static BlockingQueue<Boolean> mockSleepQueue;
 
     /**
      * Convert an amount expressed in the way humans are used to into nanocoins.
      */
     public static BigInteger toNanoCoins(int coins, int cents) {
         checkArgument(cents < 100);
+        checkArgument(cents >= 0);
+        checkArgument(coins >= 0);
+        checkArgument(coins < NetworkParameters.MAX_MONEY.divide(Utils.COIN).longValue());
         BigInteger bi = BigInteger.valueOf(coins).multiply(COIN);
         bi = bi.add(BigInteger.valueOf(cents).multiply(CENT));
         return bi;
@@ -104,10 +117,15 @@ public class Utils {
      * This takes string in a format understood by {@link BigDecimal#BigDecimal(String)},
      * for example "0", "1", "0.10", "1.23E3", "1234.5E-5".
      *
-     * @throws ArithmeticException if you try to specify fractional nanocoins
+     * @throws ArithmeticException if you try to specify fractional nanocoins, or nanocoins out of range.
      */
     public static BigInteger toNanoCoins(String coins) {
-        return new BigDecimal(coins).movePointRight(8).toBigIntegerExact();
+        BigInteger bigint = new BigDecimal(coins).movePointRight(8).toBigIntegerExact();
+        if (bigint.compareTo(BigInteger.ZERO) < 0)
+            throw new ArithmeticException("Negative coins specified");
+        if (bigint.compareTo(NetworkParameters.MAX_MONEY) > 0)
+            throw new ArithmeticException("Amount larger than the total quantity of Fastcoins possible specified.");
+        return bigint;
     }
 
     public static void uint32ToByteArrayBE(long val, byte[] out, int offset) {
@@ -122,6 +140,17 @@ public class Utils {
         out[offset + 1] = (byte) (0xFF & (val >> 8));
         out[offset + 2] = (byte) (0xFF & (val >> 16));
         out[offset + 3] = (byte) (0xFF & (val >> 24));
+    }
+
+    public static void uint64ToByteArrayLE(long val, byte[] out, int offset) {
+        out[offset + 0] = (byte) (0xFF & (val >> 0));
+        out[offset + 1] = (byte) (0xFF & (val >> 8));
+        out[offset + 2] = (byte) (0xFF & (val >> 16));
+        out[offset + 3] = (byte) (0xFF & (val >> 24));
+        out[offset + 4] = (byte) (0xFF & (val >> 32));
+        out[offset + 5] = (byte) (0xFF & (val >> 40));
+        out[offset + 6] = (byte) (0xFF & (val >> 48));
+        out[offset + 7] = (byte) (0xFF & (val >> 56));
     }
 
     public static void uint32ToByteStreamLE(long val, OutputStream stream) throws IOException {
@@ -161,18 +190,10 @@ public class Utils {
     public static byte[] doubleDigest(byte[] input) {
         return doubleDigest(input, 0, input.length);
     }
-    
-    public static byte[] scryptDigest(byte[] input) {
-        try {
-            return SCrypt.scrypt(input, input, 1024, 1, 1, 32);
-        } catch (Exception e) {
-            return null;
-        }
-    }
 
     /**
      * Calculates the SHA-256 hash of the given byte range, and then hashes the resulting hash again. This is
-     * standard procedure in Bitcoin. The resulting hash is in big endian form.
+     * standard procedure in Fastcoin. The resulting hash is in big endian form.
      */
     public static byte[] doubleDigest(byte[] input, int offset, int length) {
         synchronized (digest) {
@@ -180,6 +201,14 @@ public class Utils {
             digest.update(input, offset, length);
             byte[] first = digest.digest();
             return digest.digest(first);
+        }
+    }
+
+    public static byte[] scryptDigest(byte[] input) {
+    try {
+        return SCrypt.scrypt(input, input, 1024, 1, 1, 32);
+        } catch (Exception e) {
+            return null;
         }
     }
 
@@ -209,7 +238,7 @@ public class Utils {
      * Work around lack of unsigned types in Java.
      */
     public static boolean isLessThanUnsigned(long n1, long n2) {
-        return (n1 < n2) ^ ((n1 < 0) != (n2 < 0));
+        return UnsignedLongs.compare(n1, n2) < 0;
     }
 
     /**
@@ -354,7 +383,7 @@ public class Utils {
      * the number in big endian format (with a sign bit).
      * @param hasLength can be set to false if the given array is missing the 4 byte length field
      */
-    static BigInteger decodeMPI(byte[] mpi, boolean hasLength) {
+    public static BigInteger decodeMPI(byte[] mpi, boolean hasLength) {
         byte[] buf;
         if (hasLength) {
             int length = (int) readUint32BE(mpi, 0);
@@ -377,7 +406,7 @@ public class Utils {
      * the number in big endian format (with a sign bit).
      * @param includeLength indicates whether the 4 byte length field should be included
      */
-    static byte[] encodeMPI(BigInteger value, boolean includeLength) {
+    public static byte[] encodeMPI(BigInteger value, boolean includeLength) {
         if (value.equals(BigInteger.ZERO)) {
             if (!includeLength)
                 return new byte[] {};
@@ -423,6 +452,19 @@ public class Utils {
         return decodeMPI(bytes, true);
     }
 
+    public static long encodeCompactBits(BigInteger enlarged) {
+
+        byte[] bytes = encodeMPI(enlarged, false);
+        long value = 0;
+        value |= ((long) bytes.length & 0xffL) << (24);
+        value |= ((long) bytes[0] & 0xffL) << (16);
+        value |= ((long) bytes[1] & 0xffL) << (8);
+        value |= ((long) bytes[2] & 0xffL);
+
+
+        return value;
+    }
+
     /**
      * If non-null, overrides the return value of now().
      */
@@ -432,10 +474,24 @@ public class Utils {
      * Advances (or rewinds) the mock clock by the given number of seconds.
      */
     public static Date rollMockClock(int seconds) {
+        return rollMockClockMillis(seconds * 1000);
+    }
+
+    /**
+     * Advances (or rewinds) the mock clock by the given number of milliseconds.
+     */
+    public static Date rollMockClockMillis(long millis) {
         if (mockTime == null)
             mockTime = new Date();
-        mockTime = new Date(mockTime.getTime() + (seconds * 1000));
+        mockTime = new Date(mockTime.getTime() + millis);
         return mockTime;
+    }
+
+    /**
+     * Sets the mock clock to the given time (in seconds)
+     */
+    public static void setMockClock(long mockClock) {
+        mockTime = new Date(mockClock * 1000);
     }
 
     /**
@@ -447,11 +503,28 @@ public class Utils {
         else
             return new Date();
     }
+
+    /** Returns the current time in seconds since the epoch, or a mocked out equivalent. */
+    public static long currentTimeMillis() {
+        if (mockTime != null)
+            return mockTime.getTime();
+        else
+            return System.currentTimeMillis();
+    }
     
     public static byte[] copyOf(byte[] in, int length) {
         byte[] out = new byte[length];
         System.arraycopy(in, 0, out, 0, Math.min(length, in.length));
         return out;
+    }
+
+    /**
+     * Creates a copy of bytes and appends b to the end of it
+     */
+    public static byte[] appendByte(byte[] bytes, byte b) {
+        byte[] result = Arrays.copyOf(bytes, bytes.length + 1);
+        result[result.length - 1] = b;
+        return result;
     }
 
     /**
@@ -478,23 +551,21 @@ public class Utils {
     /**
      * <p>Given a textual message, returns a byte buffer formatted as follows:</p>
      *
-     * <tt><p>[24] "Bitcoin Signed Message:\n" [message.length as a varint] message</p></tt>
+     * <tt><p>[24] "Fastcoin Signed Message:\n" [message.length as a varint] message</p></tt>
      */
     public static byte[] formatMessageForSigning(String message) {
-        VarInt size = new VarInt(message.length());
-        int totalSize = 1 + BITCOIN_SIGNED_MESSAGE_HEADER.length() + size.getSizeInBytes() + message.length();
-        byte[] result = new byte[totalSize];
-        int cursor = 0;
-        result[cursor++] = (byte) BITCOIN_SIGNED_MESSAGE_HEADER.length();
-        byte[] bytes = BITCOIN_SIGNED_MESSAGE_HEADER.getBytes(Charset.forName("UTF-8"));
-        System.arraycopy(bytes, 0, result, cursor, bytes.length);
-        cursor += bytes.length;
-        bytes = size.encode();
-        System.arraycopy(bytes, 0, result, cursor, bytes.length);
-        cursor += bytes.length;
-        bytes = message.getBytes(Charset.forName("UTF-8"));
-        System.arraycopy(bytes, 0, result, cursor, bytes.length);
-        return result;
+        try {
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            bos.write(WORLDCOIN_SIGNED_MESSAGE_HEADER_BYTES.length);
+            bos.write(WORLDCOIN_SIGNED_MESSAGE_HEADER_BYTES);
+            byte[] messageBytes = message.getBytes(Charsets.UTF_8);
+            VarInt size = new VarInt(messageBytes.length);
+            bos.write(size.encode());
+            bos.write(messageBytes);
+            return bos.toByteArray();
+        } catch (IOException e) {
+            throw new RuntimeException(e);  // Cannot happen.
+        }
     }
     
     // 00000001, 00000010, 00000100, 00001000, ...
@@ -508,5 +579,43 @@ public class Utils {
     // Sets the given bit in data to one
     public static void setBitLE(byte[] data, int index) {
         data[index >>> 3] |= bitMask[7 & index];
+    }
+
+    /** Sleep for a span of time, or mock sleep if enabled */
+    public static void sleep(long millis) {
+        if (mockSleepQueue == null) {
+            sleepUninterruptibly(millis, TimeUnit.MILLISECONDS);
+        } else {
+            try {
+                boolean isMultiPass = mockSleepQueue.take();
+                rollMockClockMillis(millis);
+                if (isMultiPass)
+                    mockSleepQueue.offer(true);
+            } catch (InterruptedException e) {
+                // Ignored.
+            }
+        }
+    }
+
+    /** Enable or disable mock sleep.  If enabled, set mock time to current time. */
+    public static void setMockSleep(boolean isEnable) {
+        if (isEnable) {
+            mockSleepQueue = new ArrayBlockingQueue<Boolean>(1);
+            mockTime = new Date(System.currentTimeMillis());
+        } else {
+            mockSleepQueue = null;
+        }
+    }
+
+    /** Let sleeping thread pass the synchronization point.  */
+    public static void passMockSleep() {
+        mockSleepQueue.offer(false);
+    }
+
+    /** Let the sleeping thread pass the synchronization point any number of times. */
+    public static void finishMockSleep() {
+        if (mockSleepQueue != null) {
+            mockSleepQueue.offer(true);
+        }
     }
 }

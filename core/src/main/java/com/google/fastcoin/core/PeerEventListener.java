@@ -16,6 +16,7 @@
 
 package com.google.fastcoin.core;
 
+import javax.annotation.Nullable;
 import java.util.List;
 
 /**
@@ -44,7 +45,8 @@ public interface PeerEventListener {
     public void onChainDownloadStarted(Peer peer, int blocksLeft);
 
     /**
-     * Called when a peer is connected
+     * Called when a peer is connected. If this listener is registered to a {@link Peer} instead of a {@link PeerGroup},
+     * peerCount will always be 1.
      *
      * @param peer
      * @param peerCount the total number of connected peers
@@ -53,7 +55,8 @@ public interface PeerEventListener {
 
     /**
      * Called when a peer is disconnected. Note that this won't be called if the listener is registered on a
-     * {@link PeerGroup} and the group is in the process of shutting down.
+     * {@link PeerGroup} and the group is in the process of shutting down. If this listener is registered to a
+     * {@link Peer} instead of a {@link PeerGroup}, peerCount will always be 0.
      *
      * @param peer
      * @param peerCount the total number of connected peers
@@ -61,10 +64,13 @@ public interface PeerEventListener {
     public void onPeerDisconnected(Peer peer, int peerCount);
 
     /**
-     * Called when a message is received by a peer, before the message is processed. The returned message is
+     * <p>Called when a message is received by a peer, before the message is processed. The returned message is
      * processed instead. Returning null will cause the message to be ignored by the Peer returning the same message
      * object allows you to see the messages received but not change them. The result from one event listeners
-     * callback is passed as "m" to the next, forming a chain.
+     * callback is passed as "m" to the next, forming a chain.</p>
+     *
+     * <p>Note that this will never be called if registered with any executor other than
+     * {@link com.google.fastcoin.utils.Threading#SAME_THREAD}</p>
      */
     public Message onPreMessageReceived(Peer peer, Message m);
 
@@ -74,8 +80,12 @@ public interface PeerEventListener {
     public void onTransaction(Peer peer, Transaction t);
 
     /**
-     * Called when a peer receives a getdata message, usually in response to an "inv" being broadcast. Return as many
-     * items as possible which appear in the {@link GetDataMessage}, or null if you're not interested in responding.
+     * <p>Called when a peer receives a getdata message, usually in response to an "inv" being broadcast. Return as many
+     * items as possible which appear in the {@link GetDataMessage}, or null if you're not interested in responding.</p>
+     *
+     * <p>Note that this will never be called if registered with any executor other than
+     * {@link com.google.fastcoin.utils.Threading#SAME_THREAD}</p>
      */
+    @Nullable
     public List<Message> getData(Peer peer, GetDataMessage m);
 }

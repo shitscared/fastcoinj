@@ -16,12 +16,14 @@
 
 package com.google.fastcoin.core;
 
-import com.google.common.base.Preconditions;
+import com.google.fastcoin.script.Script;
 
+import javax.annotation.Nullable;
 import java.io.IOException;
 import java.io.ObjectOutputStream;
 import java.io.OutputStream;
 import java.io.Serializable;
+import java.lang.ref.WeakReference;
 import java.util.Map;
 
 import static com.google.common.base.Preconditions.checkElementIndex;
@@ -50,7 +52,7 @@ public class TransactionInput extends ChildMessage implements Serializable {
     private byte[] scriptBytes;
     // The Script object obtained from parsing scriptBytes. Only filled in on demand and if the transaction is not
     // coinbase.
-    transient private Script scriptSig;
+    transient private WeakReference<Script> scriptSig;
     // A pointer to the transaction that owns this input.
     private Transaction parentTransaction;
 
@@ -66,15 +68,13 @@ public class TransactionInput extends ChildMessage implements Serializable {
         length = 40 + (scriptBytes == null ? 1 : VarInt.sizeOf(scriptBytes.length) + scriptBytes.length);
     }
 
-    public TransactionInput(NetworkParameters params, Transaction parentTransaction,
-            byte[] scriptBytes,
-            TransactionOutPoint outpoint) {
+    public TransactionInput(NetworkParameters params, @Nullable Transaction parentTransaction, byte[] scriptBytes,
+                            TransactionOutPoint outpoint) {
         super(params);
         this.scriptBytes = scriptBytes;
         this.outpoint = outpoint;
         this.sequence = NO_SEQUENCE;
         this.parentTransaction = parentTransaction;
-
         length = 40 + (scriptBytes == null ? 1 : VarInt.sizeOf(scriptBytes.length) + scriptBytes.length);
     }
 
@@ -120,7 +120,7 @@ public class TransactionInput extends ChildMessage implements Serializable {
         this.parentTransaction = parentTransaction;
     }
 
-    protected void parseLite() {
+    protected void parseLite() throws ProtocolException {
         int curs = cursor;
         int scriptLen = (int) readVarInt(36);
         length = cursor - offset + scriptLen + 4;
@@ -149,33 +149,45 @@ public class TransactionInput extends ChildMessage implements Serializable {
     public boolean isCoinBase() {
         maybeParse();
         return outpoint.getHash().equals(Sha256Hash.ZERO_HASH) &&
-                outpoint.getIndex() == NO_SEQUENCE;
+                (outpoint.getIndex() & 0xFFFFFFFFL) == 0xFFFFFFFFL;  // -1 but all is serialized to the wire as unsigned int.
     }
 
     /**
-     * Returns the input script.
+     * Returns the script that is fed to the referenced output (scriptPubKey) script in order to satisfy it: usually
+     * contains signatures and maybe keys, but can contain arbitrary data if the output script accepts it.
      */
     public Script getScriptSig() throws ScriptException {
         // Transactions that generate new coins don't actually have a script. Instead this
         // parameter is overloaded to be something totally different.
-        if (scriptSig == null) {
+        Script script = scriptSig == null ? null : scriptSig.get();
+        if (script == null) {
             maybeParse();
-            scriptSig = new Script(params, Preconditions.checkNotNull(scriptBytes), 0, scriptBytes.length);
+            script = new Script(scriptBytes);
+            scriptSig = new WeakReference<Script>(script);
+            return script;
         }
-        return scriptSig;
+        return script;
+    }
+
+    /** Set the given program as the scriptSig that is supposed to satisfy the connected output script. */
+    public void setScriptSig(Script scriptSig) {
+        this.scriptSig = new WeakReference<Script>(checkNotNull(scriptSig));
+        // TODO: This should all be cleaned up so we have a consistent internal representation.
+        setScriptBytes(scriptSig.getProgram());
     }
 
     /**
-     * Convenience method that returns the from address of this input by parsing the scriptSig.
-     *
-     * @throws ScriptException if the scriptSig could not be understood (eg, if this is a coinbase transaction).
+     * Convenience method that returns the from address of this input by parsing the scriptSig. The concept of a
+     * "from address" is not well defined in Bitcoin and you should not assume that senders of a transaction can
+     * actually receive coins on the same address they used to sign (e.g. this is not true for shared wallets).
      */
+    @Deprecated
     public Address getFromAddress() throws ScriptException {
         if (isCoinBase()) {
             throw new ScriptException(
                     "This is a coinbase transaction which generates new coins. It does not have a from address.");
         }
-        return getScriptSig().getFromAddress();
+        return getScriptSig().getFromAddress(params);
     }
 
     /**
@@ -227,6 +239,7 @@ public class TransactionInput extends ChildMessage implements Serializable {
      */
     void setScriptBytes(byte[] scriptBytes) {
         unCache();
+        this.scriptSig = null;
         int oldLength = length;
         this.scriptBytes = scriptBytes;
         // 40 = previous_outpoint (36) + sequence (4)
@@ -248,15 +261,13 @@ public class TransactionInput extends ChildMessage implements Serializable {
         if (isCoinBase())
             return "TxIn: COINBASE";
         try {
-            return "TxIn from tx " + outpoint + " (pubkey: " + Utils.bytesToHexString(getScriptSig().getPubKey()) +
-                    ") script:" +
-                    getScriptSig().toString();
+            return "TxIn for [" + outpoint + "]: " + getScriptSig();
         } catch (ScriptException e) {
             throw new RuntimeException(e);
         }
     }
 
-    enum ConnectionResult {
+    public enum ConnectionResult {
         NO_SUCH_TX,
         ALREADY_SPENT,
         SUCCESS
@@ -269,15 +280,15 @@ public class TransactionInput extends ChildMessage implements Serializable {
      *
      * @return The TransactionOutput or null if the transactions map doesn't contain the referenced tx.
      */
+    @Nullable
     TransactionOutput getConnectedOutput(Map<Sha256Hash, Transaction> transactions) {
         Transaction tx = transactions.get(outpoint.getHash());
         if (tx == null)
             return null;
-        TransactionOutput out = tx.getOutputs().get((int) outpoint.getIndex());
-        return out;
+        return tx.getOutputs().get((int) outpoint.getIndex());
     }
 
-    enum ConnectMode {
+    public enum ConnectMode {
         DISCONNECT_ON_CONFLICT,
         ABORT_ON_CONFLICT
     }
@@ -309,12 +320,15 @@ public class TransactionInput extends ChildMessage implements Serializable {
      * @return NO_SUCH_TX if transaction is not the prevtx, ALREADY_SPENT if there was a conflict, SUCCESS if not.
      */
     public ConnectionResult connect(Transaction transaction, ConnectMode mode) {
-        if (!transaction.getHash().equals(outpoint.getHash()) && mode != ConnectMode.DISCONNECT_ON_CONFLICT)
+        if (!transaction.getHash().equals(outpoint.getHash()))
             return ConnectionResult.NO_SUCH_TX;
         checkElementIndex((int) outpoint.getIndex(), transaction.getOutputs().size(), "Corrupt transaction");
         TransactionOutput out = transaction.getOutput((int) outpoint.getIndex());
         if (!out.isAvailableForSpending()) {
-            if (mode == ConnectMode.DISCONNECT_ON_CONFLICT) {
+            if (out.parentTransaction.equals(outpoint.fromTx)) {
+                // Already connected.
+                return ConnectionResult.SUCCESS;
+            } else if (mode == ConnectMode.DISCONNECT_ON_CONFLICT) {
                 out.markAsUnspent();
             } else if (mode == ConnectMode.ABORT_ON_CONFLICT) {
                 outpoint.fromTx = checkNotNull(out.parentTransaction);
@@ -337,7 +351,7 @@ public class TransactionInput extends ChildMessage implements Serializable {
      *
      * @return true if the disconnection took place, false if it was not connected.
      */
-    boolean disconnect() {
+    public boolean disconnect() {
         if (outpoint.fromTx == null) return false;
         TransactionOutput output = outpoint.fromTx.getOutput((int) outpoint.getIndex());
         if (output.getSpentBy() == this) {
@@ -359,6 +373,9 @@ public class TransactionInput extends ChildMessage implements Serializable {
         out.defaultWriteObject();
     }
 
+    /**
+     * @return true if this transaction's sequence number is set (ie it may be a part of a time-locked transaction)
+     */
     public boolean hasSequence() {
         return sequence != NO_SEQUENCE;
     }
@@ -366,24 +383,41 @@ public class TransactionInput extends ChildMessage implements Serializable {
     /**
      * For a connected transaction, runs the script against the connected pubkey and verifies they are correct.
      * @throws ScriptException if the script did not verify.
+     * @throws VerificationException If the outpoint doesn't match the given output.
      */
-    public void verify() throws ScriptException {
-        Preconditions.checkNotNull(getOutpoint().fromTx, "Not connected");
+    public void verify() throws VerificationException {
+        final Transaction fromTx = getOutpoint().fromTx;
         long spendingIndex = getOutpoint().getIndex();
-        Script pubKey = getOutpoint().fromTx.getOutputs().get((int) spendingIndex).getScriptPubKey();
-        Script sig = getScriptSig();
-        int myIndex = parentTransaction.getInputs().indexOf(this);
-        sig.correctlySpends(parentTransaction, myIndex, pubKey, true);
+        checkNotNull(fromTx, "Not connected");
+        final TransactionOutput output = fromTx.getOutput((int) spendingIndex);
+        verify(output);
     }
 
+    /**
+     * Verifies that this input can spend the given output. Note that this input must be a part of a transaction.
+     * Also note that the consistency of the outpoint will be checked, even if this input has not been connected.
+     *
+     * @param output the output that this input is supposed to spend.
+     * @throws ScriptException If the script doesn't verify.
+     * @throws VerificationException If the outpoint doesn't match the given output.
+     */
+    public void verify(TransactionOutput output) throws VerificationException {
+        if (!getOutpoint().getHash().equals(output.parentTransaction.getHash()))
+            throw new VerificationException("This input does not refer to the tx containing the output.");
+        if (getOutpoint().getIndex() != output.getIndex())
+            throw new VerificationException("This input refers to a different output on the given tx.");
+        Script pubKey = output.getScriptPubKey();
+        int myIndex = parentTransaction.getInputs().indexOf(this);
+        getScriptSig().correctlySpends(parentTransaction, myIndex, pubKey, true);
+    }
 
     /**
      * Returns the connected output, assuming the input was connected with
      * {@link TransactionInput#connect(TransactionOutput)} or variants at some point. If it wasn't connected, then
      * this method returns null.
      */
+    @Nullable
     public TransactionOutput getConnectedOutput() {
         return getOutpoint().getConnectedOutput();
     }
-
 }

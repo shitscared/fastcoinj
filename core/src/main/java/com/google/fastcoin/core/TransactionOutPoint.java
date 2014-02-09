@@ -16,6 +16,9 @@
 
 package com.google.fastcoin.core;
 
+import com.google.fastcoin.script.Script;
+
+import javax.annotation.Nullable;
 import java.io.IOException;
 import java.io.ObjectOutputStream;
 import java.io.OutputStream;
@@ -41,7 +44,7 @@ public class TransactionOutPoint extends ChildMessage implements Serializable {
     // It points to the connected transaction.
     Transaction fromTx;
 
-    public TransactionOutPoint(NetworkParameters params, long index, Transaction fromTx) {
+    public TransactionOutPoint(NetworkParameters params, long index, @Nullable Transaction fromTx) {
         super(params);
         this.index = index;
         if (fromTx != null) {
@@ -112,25 +115,20 @@ public class TransactionOutPoint extends ChildMessage implements Serializable {
      * sides in memory, and they have been linked together, this returns a pointer to the connected output, or null
      * if there is no such connection.
      */
-    TransactionOutput getConnectedOutput() {
+    @Nullable
+    public TransactionOutput getConnectedOutput() {
         if (fromTx == null) return null;
         return fromTx.getOutputs().get((int) index);
     }
 
     /**
      * Returns the pubkey script from the connected output.
+     * @throws java.lang.NullPointerException if there is no connected output.
      */
     byte[] getConnectedPubKeyScript() {
-        byte[] result = checkNotNull(getConnectedOutput().getScriptBytes());
+        byte[] result = checkNotNull(getConnectedOutput()).getScriptBytes();
         checkState(result.length > 0);
         return result;
-    }
-
-    /**
-     * Convenience method to get the connected outputs pubkey hash.
-     */
-    byte[] getConnectedPubKeyHash() throws ScriptException {
-        return getConnectedOutput().getScriptPubKey().getPubKeyHash();
     }
 
     /**
@@ -138,8 +136,11 @@ public class TransactionOutPoint extends ChildMessage implements Serializable {
      * If the script forms cannot be understood, throws ScriptException.
      * @return an ECKey or null if the connected key cannot be found in the wallet.
      */
+    @Nullable
     public ECKey getConnectedKey(Wallet wallet) throws ScriptException {
-        Script connectedScript = getConnectedOutput().getScriptPubKey();
+        TransactionOutput connectedOutput = getConnectedOutput();
+        checkNotNull(connectedOutput, "Input is not connected so cannot retrieve key");
+        Script connectedScript = connectedOutput.getScriptPubKey();
         if (connectedScript.isSentToAddress()) {
             byte[] addressBytes = connectedScript.getPubKeyHash();
             return wallet.findKeyFromPubHash(addressBytes);
@@ -165,25 +166,16 @@ public class TransactionOutPoint extends ChildMessage implements Serializable {
         return hash;
     }
 
-    /**
-     * @param hash the hash to set
-     */
     void setHash(Sha256Hash hash) {
         this.hash = hash;
     }
 
-    /**
-     * @return the index
-     */
     public long getIndex() {
         maybeParse();
         return index;
     }
     
-    /**
-     * @param index the index to set
-     */
-    void setIndex(long index) {
+    public void setIndex(long index) {
         this.index = index;
     }
 

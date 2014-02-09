@@ -31,18 +31,22 @@ public class FilteredBlock extends Message {
 
     // The PartialMerkleTree of transactions
     private PartialMerkleTree merkleTree;
-    private Set<Sha256Hash> cachedTransactionHashes = null;
+    private List<Sha256Hash> cachedTransactionHashes = null;
     
-    // A set of transactions who's hashes are a subset of getTransactionHashes()
+    // A set of transactions whose hashes are a subset of getTransactionHashes()
     // These were relayed as a part of the filteredblock getdata, ie likely weren't previously received as loose transactions
-    private List<Transaction> associatedTransactions = new LinkedList<Transaction>();
+    private Map<Sha256Hash, Transaction> associatedTransactions = new HashMap<Sha256Hash, Transaction>();
     
     public FilteredBlock(NetworkParameters params, byte[] payloadBytes) throws ProtocolException {
         super(params, payloadBytes, 0);
     }
     
     public void fastcoinSerializeToStream(OutputStream stream) throws IOException {
-        throw new RuntimeException("Not implemented");
+        if (header.transactions == null)
+            header.fastcoinSerializeToStream(stream);
+        else
+            header.cloneAsHeader().fastcoinSerializeToStream(stream);
+        merkleTree.fastcoinSerializeToStream(stream);
     }
 
     @Override
@@ -66,13 +70,13 @@ public class FilteredBlock extends Message {
      * 
      * @throws ProtocolException If the partial merkle block is invalid or the merkle root of the partial merkle block doesnt match the block header
      */
-    public Set<Sha256Hash> getTransactionHashes() throws VerificationException {
+    public List<Sha256Hash> getTransactionHashes() throws VerificationException {
         if (cachedTransactionHashes != null)
-            return Collections.unmodifiableSet(cachedTransactionHashes);
-        Set<Sha256Hash> hashesMatched = new HashSet<Sha256Hash>();
+            return Collections.unmodifiableList(cachedTransactionHashes);
+        List<Sha256Hash> hashesMatched = new LinkedList<Sha256Hash>();
         if (header.getMerkleRoot().equals(merkleTree.getTxnHashAndMerkleRoot(hashesMatched))) {
             cachedTransactionHashes = hashesMatched;
-            return Collections.unmodifiableSet(cachedTransactionHashes);
+            return Collections.unmodifiableList(cachedTransactionHashes);
         } else
             throw new VerificationException("Merkle root of block header does not match merkle root of partial merkle tree.");
     }
@@ -94,15 +98,21 @@ public class FilteredBlock extends Message {
      * @returns false if the tx is not relevant to this FilteredBlock
      */
     public boolean provideTransaction(Transaction tx) throws VerificationException {
-        if (getTransactionHashes().contains(tx.getHash())) {
-            associatedTransactions.add(tx);
+        Sha256Hash hash = tx.getHash();
+        if (getTransactionHashes().contains(hash)) {
+            associatedTransactions.put(hash, tx);
             return true;
         } else
             return false;
     }
     
     /** Gets the set of transactions which were provided using provideTransaction() which match in getTransactionHashes() */
-    public List<Transaction> getAssociatedTransactions() {
-        return Collections.unmodifiableList(associatedTransactions);
+    public Map<Sha256Hash, Transaction> getAssociatedTransactions() {
+        return Collections.unmodifiableMap(associatedTransactions);
+    }
+
+    /** Number of transactions in this block, before it was filtered */
+    public int getTransactionCount() {
+        return merkleTree.transactionCount;
     }
 }

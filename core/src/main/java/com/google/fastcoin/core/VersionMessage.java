@@ -16,6 +16,7 @@
 
 package com.google.fastcoin.core;
 
+import javax.annotation.Nullable;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetAddress;
@@ -36,7 +37,7 @@ public class VersionMessage extends Message {
     /**
      * A services flag that denotes whether the peer has a copy of the block chain or not.
      */
-    public static final int NODE_NETWORK = 1;
+    public static final int NODE_NETWORK =  (1 << 0);
 
     /**
      * The version number of the protocol spoken.
@@ -73,9 +74,9 @@ public class VersionMessage extends Message {
     public boolean relayTxesBeforeFilter;
 
     /** The version of this library release, as a string. */
-    public static final String BITCOINJ_VERSION = "0.8-SNAPSHOT";
+    public static final String BITCOINJ_VERSION = "0.18";
     /** The value that is prepended to the subVer field of this application. */
-    public static final String LIBRARY_SUBVER = "/BitCoinJ:" + BITCOINJ_VERSION + "/";
+    public static final String LIBRARY_SUBVER = "/FastCoinJ:" + BITCOINJ_VERSION + "/";
 
     public VersionMessage(NetworkParameters params, byte[] msg) throws ProtocolException {
         super(params, msg, 0);
@@ -100,9 +101,10 @@ public class VersionMessage extends Message {
         try {
             // We hard-code the IPv4 localhost address here rather than use InetAddress.getLocalHost() because some
             // mobile phones have broken localhost DNS entries, also, this is faster.
-            final byte[] localhost = new byte[] { 127, 0, 0, 1 };
-            myAddr = new PeerAddress(InetAddress.getByAddress(localhost), params.port, 0);
-            theirAddr = new PeerAddress(InetAddress.getByAddress(localhost), params.port, 0);
+            final byte[] localhost = { 127, 0, 0, 1 };
+            myAddr = new PeerAddress(InetAddress.getByAddress(localhost), params.getPort(), 0);
+            theirAddr = new PeerAddress(InetAddress.getByAddress(localhost), params.getPort(), 0);
+
         } catch (UnknownHostException e) {
             throw new RuntimeException(e);  // Cannot happen (illegal IP length).
         }
@@ -153,7 +155,7 @@ public class VersionMessage extends Message {
             bestHeight = readUint32();
             if (!hasMoreBytes())
                 return;
-            relayTxesBeforeFilter = readBytes(1)[0] != 0;
+
         } finally {
             length = cursor - offset;
         }
@@ -161,11 +163,12 @@ public class VersionMessage extends Message {
 
     @Override
     public void fastcoinSerializeToStream(OutputStream buf) throws IOException {
+
         Utils.uint32ToByteStreamLE(clientVersion, buf);
-        Utils.uint32ToByteStreamLE(localServices, buf);
-        Utils.uint32ToByteStreamLE(localServices >> 32, buf);
-        Utils.uint32ToByteStreamLE(time, buf);
-        Utils.uint32ToByteStreamLE(time >> 32, buf);
+        Utils.uint32ToByteStreamLE((int)(localServices & 0xFFFFFFFF), buf);
+        Utils.uint32ToByteStreamLE((int)((localServices >> 32) & 0xFFFFFFFF), buf);
+        Utils.uint32ToByteStreamLE((int)(time & 0xFFFFFFFF), buf);
+        Utils.uint32ToByteStreamLE((int)((time >> 32) & 0xFFFFFFFF), buf);
         try {
             // My address.
             myAddr.fastcoinSerialize(buf);
@@ -182,12 +185,12 @@ public class VersionMessage extends Message {
         Utils.uint32ToByteStreamLE(0, buf);
         Utils.uint32ToByteStreamLE(0, buf);
         // Now comes subVer.
-        byte[] subVerBytes = subVer.getBytes("UTF-8");
+        byte[] subVerBytes = subVer.getBytes("US-ASCII");
         buf.write(new VarInt(subVerBytes.length).encode());
         buf.write(subVerBytes);
         // Size of known block chain.
+
         Utils.uint32ToByteStreamLE(bestHeight, buf);
-        buf.write(relayTxesBeforeFilter ? 1 : 0);
     }
 
     /**
@@ -217,7 +220,7 @@ public class VersionMessage extends Message {
      */
     @Override
     byte[] getChecksum() {
-        return null;
+        throw new UnsupportedOperationException();
     }
 
     /**
@@ -225,6 +228,7 @@ public class VersionMessage extends Message {
      */
     @Override
     void setChecksum(byte[] checksum) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -261,7 +265,7 @@ public class VersionMessage extends Message {
     /**
      * Appends the given user-agent information to the subVer field. The subVer is composed of a series of
      * name:version pairs separated by slashes in the form of a path. For example a typical subVer field for BitCoinJ
-     * users might look like "/BitCoinJ:0.4-SNAPSHOT/MultiBit:1.2/" where libraries come further to the left.<p>
+     * users might look like "/BitCoinJ:0.4-SNAPSHOT/FastcoinWallet:1.2/" where libraries come further to the left.<p>
      *
      * There can be as many components as you feel a need for, and the version string can be anything, but it is
      * recommended to use A.B.C where A = major, B = minor and C = revision for software releases, and dates for
@@ -269,8 +273,8 @@ public class VersionMessage extends Message {
      * and version are not allowed to contain such characters. <p>
      *
      * Anything put in the "comments" field will appear in brackets and may be used for platform info, or anything
-     * else. For example, calling <tt>appendToSubVer("MultiBit", "1.0", "Windows")</tt> will result in a subVer being
-     * set of "/BitCoinJ:1.0/MultiBit:1.0(Windows)/. Therefore the / ( and ) characters are reserved in all these
+     * else. For example, calling <tt>appendToSubVer("FastcoinWallet", "1.0", "Windows")</tt> will result in a subVer being
+     * set of "/BitCoinJ:1.0/FastcoinWallet:1.0(Windows)/. Therefore the / ( and ) characters are reserved in all these
      * components. If you don't want to add a comment (recommended), pass null.<p>
      *
      * See <a href="https://en.fastcoin.it/wiki/BIP_0014">BIP 14</a> for more information.
@@ -278,7 +282,7 @@ public class VersionMessage extends Message {
      * @param comments Optional (can be null) platform or other node specific information.
      * @throws IllegalArgumentException if name, version or comments contains invalid characters.
      */
-    public void appendToSubVer(String name, String version, String comments) {
+    public void appendToSubVer(String name, String version, @Nullable String comments) {
         checkSubVerComponent(name);
         checkSubVerComponent(version);
         if (comments != null) {
@@ -289,7 +293,7 @@ public class VersionMessage extends Message {
         }
     }
 
-    private void checkSubVerComponent(String component) {
+    private static void checkSubVerComponent(String component) {
         if (component.contains("/") || component.contains("(") || component.contains(")"))
             throw new IllegalArgumentException("name contains invalid characters");
     }
@@ -306,6 +310,8 @@ public class VersionMessage extends Message {
      * is available and the memory pool of the remote peer will be queried when the downloadData property is true.
      */
     public boolean isBloomFilteringSupported() {
-        return clientVersion >= FilteredBlock.MIN_PROTOCOL_VERSION;
+         // TODO: no bloomfiltering (yet)
+        // return clientVersion >= FilteredBlock.MIN_PROTOCOL_VERSION;
+        return false; 
     }
 }

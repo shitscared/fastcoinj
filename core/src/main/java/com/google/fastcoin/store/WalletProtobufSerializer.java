@@ -16,7 +16,22 @@
 
 package com.google.fastcoin.store;
 
-import static com.google.common.base.Preconditions.checkNotNull;
+import com.google.fastcoin.core.*;
+import com.google.fastcoin.core.TransactionConfidence.ConfidenceType;
+import com.google.fastcoin.crypto.EncryptedPrivateKey;
+import com.google.fastcoin.crypto.KeyCrypter;
+import com.google.fastcoin.crypto.KeyCrypterScrypt;
+import com.google.fastcoin.script.Script;
+import com.google.fastcoin.wallet.WalletTransaction;
+import com.google.common.collect.Lists;
+import com.google.protobuf.ByteString;
+import com.google.protobuf.TextFormat;
+import org.wallet.store.FastcoinWalletVersion;
+import org.wallet.store.WalletVersionException;
+import org.fastcoinj.wallet.Protos;
+import org.fastcoinj.wallet.Protos.Wallet.EncryptionType;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -26,35 +41,11 @@ import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.List;
 import java.util.ListIterator;
 import java.util.Map;
 
-import org.fastcoinj.wallet.Protos;
-import org.fastcoinj.wallet.Protos.Wallet.EncryptionType;
-import org.multibit.store.MultiBitWalletVersion;
-import org.multibit.store.WalletVersionException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import com.google.fastcoin.core.ECKey;
-import com.google.fastcoin.core.NetworkParameters;
-import com.google.fastcoin.core.PeerAddress;
-import com.google.fastcoin.core.Sha256Hash;
-import com.google.fastcoin.core.Transaction;
-import com.google.fastcoin.core.TransactionConfidence;
-import com.google.fastcoin.core.TransactionConfidence.ConfidenceType;
-import com.google.fastcoin.core.TransactionInput;
-import com.google.fastcoin.core.TransactionOutPoint;
-import com.google.fastcoin.core.TransactionOutput;
-import com.google.fastcoin.core.Wallet;
-import com.google.fastcoin.core.WalletExtension;
-import com.google.fastcoin.core.WalletTransaction;
-import com.google.fastcoin.crypto.EncryptedPrivateKey;
-import com.google.fastcoin.crypto.KeyCrypter;
-import com.google.fastcoin.crypto.KeyCrypterScrypt;
-import com.google.common.base.Preconditions;
-import com.google.protobuf.ByteString;
-import com.google.protobuf.TextFormat;
+import static com.google.common.base.Preconditions.checkNotNull;
 
 /**
  * Serialize and de-serialize a wallet to a byte stream containing a
@@ -62,7 +53,7 @@ import com.google.protobuf.TextFormat;
  * a data interchange format developed by Google with an efficient binary representation, a type safe specification
  * language and compilers that generate code to work with those data structures for many languages. Protocol buffers
  * can have their format evolved over time: conceptually they represent data using (tag, length, value) tuples. The
- * format is defined by the <tt>bitcoin.proto</tt> file in the bitcoinj source distribution.<p>
+ * format is defined by the <tt>fastcoin.proto</tt> file in the fastcoinj source distribution.<p>
  *
  * This class is used through its static methods. The most common operations are writeWallet and readWallet, which do
  * the obvious operations on Output/InputStreams. You can use a {@link java.io.ByteArrayInputStream} and equivalent
@@ -81,13 +72,24 @@ public class WalletProtobufSerializer {
     // Used for de-serialization
     protected Map<ByteString, Transaction> txMap;
 
+    private boolean requireMandatoryExtensions = true;
+
     public WalletProtobufSerializer() {
         txMap = new HashMap<ByteString, Transaction>();
     }
 
     /**
+     * If this property is set to false, then unknown mandatory extensions will be ignored instead of causing load
+     * errors. You should only use this if you know exactly what you are doing, as the extension data will NOT be
+     * round-tripped, possibly resulting in a corrupted wallet if you save it back out again.
+     */
+    public void setRequireMandatoryExtensions(boolean value) {
+        requireMandatoryExtensions = value;
+    }
+
+    /**
      * Formats the given wallet (transactions and keys) to the given output stream in protocol buffer format.<p>
-     *     
+     *
      * Equivalent to <tt>walletToProto(wallet).writeTo(output);</tt>
      */
     public void writeWallet(Wallet wallet, OutputStream output) throws IOException {
@@ -158,12 +160,24 @@ public class WalletProtobufSerializer {
             walletBuilder.addKey(keyBuilder);
         }
 
+        for (Script script : wallet.getWatchedScripts()) {
+            Protos.Script protoScript =
+                    Protos.Script.newBuilder()
+                            .setProgram(ByteString.copyFrom(script.getProgram()))
+                            .setCreationTimestamp(script.getCreationTimeSeconds() * 1000)
+                            .build();
+
+            walletBuilder.addWatchedScript(protoScript);
+        }
+
         // Populate the lastSeenBlockHash field.
         Sha256Hash lastSeenBlockHash = wallet.getLastBlockSeenHash();
         if (lastSeenBlockHash != null) {
             walletBuilder.setLastSeenBlockHash(hashToByteString(lastSeenBlockHash));
             walletBuilder.setLastSeenBlockHeight(wallet.getLastBlockSeenHeight());
         }
+        if (wallet.getLastBlockSeenTimeSecs() > 0)
+            walletBuilder.setLastSeenBlockTimeSecs(wallet.getLastBlockSeenTimeSecs());
 
         // Populate the scrypt parameters.
         KeyCrypter keyCrypter = wallet.getKeyCrypter();
@@ -180,6 +194,11 @@ public class WalletProtobufSerializer {
                 // Some other form of encryption has been specified that we do not know how to persist.
                 throw new RuntimeException("The wallet has encryption of type '" + keyCrypter.getUnderstoodEncryptionType() + "' but this WalletProtobufSerializer does not know how to persist this.");
             }
+        }
+
+        if (wallet.getKeyRotationTime() != null) {
+            long timeSecs = wallet.getKeyRotationTime().getTime() / 1000;
+            walletBuilder.setKeyRotationTime(timeSecs);
         }
 
         populateExtensions(wallet, walletBuilder);
@@ -202,11 +221,11 @@ public class WalletProtobufSerializer {
         }
     }
 
-    protected static Protos.Transaction makeTxProto(WalletTransaction wtx) {
+    private static Protos.Transaction makeTxProto(WalletTransaction wtx) {
         Transaction tx = wtx.getTransaction();
         Protos.Transaction.Builder txBuilder = Protos.Transaction.newBuilder();
         
-        txBuilder.setPool(Protos.Transaction.Pool.valueOf(wtx.getPool().getValue()))
+        txBuilder.setPool(getProtoPool(wtx))
                  .setHash(hashToByteString(tx.getHash()))
                  .setVersion((int) tx.getVersion());
 
@@ -246,9 +265,11 @@ public class WalletProtobufSerializer {
         }
         
         // Handle which blocks tx was seen in.
-        if (tx.getAppearsInHashes() != null) {
-            for (Sha256Hash hash : tx.getAppearsInHashes()) {
-                txBuilder.addBlockHash(hashToByteString(hash));
+        final Map<Sha256Hash, Integer> appearsInHashes = tx.getAppearsInHashes();
+        if (appearsInHashes != null) {
+            for (Map.Entry<Sha256Hash, Integer> entry : appearsInHashes.entrySet()) {
+                txBuilder.addBlockHash(hashToByteString(entry.getKey()));
+                txBuilder.addBlockRelativityOffsets(entry.getValue());
             }
         }
         
@@ -257,8 +278,29 @@ public class WalletProtobufSerializer {
             Protos.TransactionConfidence.Builder confidenceBuilder = Protos.TransactionConfidence.newBuilder();
             writeConfidence(txBuilder, confidence, confidenceBuilder);
         }
+
+        Protos.Transaction.Purpose purpose;
+        switch (tx.getPurpose()) {
+            case UNKNOWN: purpose = Protos.Transaction.Purpose.UNKNOWN; break;
+            case USER_PAYMENT: purpose = Protos.Transaction.Purpose.USER_PAYMENT; break;
+            case KEY_ROTATION: purpose = Protos.Transaction.Purpose.KEY_ROTATION; break;
+            default:
+                throw new RuntimeException("New tx purpose serialization not implemented.");
+        }
+        txBuilder.setPurpose(purpose);
         
         return txBuilder.build();
+    }
+
+    private static Protos.Transaction.Pool getProtoPool(WalletTransaction wtx) {
+        switch (wtx.getPool()) {
+            case UNSPENT: return Protos.Transaction.Pool.UNSPENT;
+            case SPENT: return Protos.Transaction.Pool.SPENT;
+            case DEAD: return Protos.Transaction.Pool.DEAD;
+            case PENDING: return Protos.Transaction.Pool.PENDING;
+            default:
+                throw new RuntimeException("Unreachable");
+        }
     }
 
     private static void writeConfidence(Protos.Transaction.Builder txBuilder,
@@ -313,31 +355,43 @@ public class WalletProtobufSerializer {
     }
 
     /**
-     * Parses a wallet from the given stream, using the provided Wallet instance to load data into. This is primarily
+     * <p>Parses a wallet from the given stream, using the provided Wallet instance to load data into. This is primarily
      * used when you want to register extensions. Data in the proto will be added into the wallet where applicable and
-     * overwrite where not.
+     * overwrite where not.</p>
+     *
+     * <p>A wallet can be unreadable for various reasons, such as inability to open the file, corrupt data, internally
+     * inconsistent data, a wallet extension marked as mandatory that cannot be handled and so on. You should always
+     * handle {@link UnreadableWalletException} and communicate failure to the user in an appropriate manner.</p>
+     *
+     * @throws UnreadableWalletException thrown in various error conditions (see description).
      */
-    public Wallet readWallet(InputStream input) throws IOException {
-        Protos.Wallet walletProto = parseToProto(input);
-
-        // System.out.println(TextFormat.printToString(walletProto));
-
-        NetworkParameters params = NetworkParameters.fromID(walletProto.getNetworkIdentifier());
-        Wallet wallet = new Wallet(params);
-        readWallet(walletProto, wallet);
-        return wallet;
+    public Wallet readWallet(InputStream input) throws UnreadableWalletException {
+        try {
+            Protos.Wallet walletProto = parseToProto(input);
+            final String paramsID = walletProto.getNetworkIdentifier();
+            NetworkParameters params = NetworkParameters.fromID(paramsID);
+            if (params == null)
+                throw new UnreadableWalletException("Unknown network parameters ID " + paramsID);
+            Wallet wallet = new Wallet(params);
+            readWallet(walletProto, wallet);
+            return wallet;
+        } catch (IOException e) {
+            throw new UnreadableWalletException("Could not parse input stream to protobuf", e);
+        }
     }
 
     /**
-     * Loads wallet data from the given protocol buffer and inserts it into the given Wallet object. This is primarily
+     * <p>Loads wallet data from the given protocol buffer and inserts it into the given Wallet object. This is primarily
      * useful when you wish to pre-register extension objects. Note that if loading fails the provided Wallet object
-     * may be in an indeterminate state and should be thrown away.
+     * may be in an indeterminate state and should be thrown away.</p>
      *
-     * @throws IOException if there is a problem reading the stream.
-     * @throws IllegalArgumentException if the wallet is corrupt.
+     * <p>A wallet can be unreadable for various reasons, such as inability to open the file, corrupt data, internally
+     * inconsistent data, a wallet extension marked as mandatory that cannot be handled and so on. You should always
+     * handle {@link UnreadableWalletException} and communicate failure to the user in an appropriate manner.</p>
+     *
+     * @throws UnreadableWalletException thrown in various error conditions (see description).
      */
-    public void readWallet(Protos.Wallet walletProto, Wallet wallet) throws IOException {
-        // TODO: This method should throw more specific exception types than IllegalArgumentException.
+    public void readWallet(Protos.Wallet walletProto, Wallet wallet) throws UnreadableWalletException {
         // Read the scrypt parameters that specify how encryption and decryption is performed.
         if (walletProto.hasEncryptionParameters()) {
             Protos.ScryptParameters encryptionParameters = walletProto.getEncryptionParameters();
@@ -351,7 +405,7 @@ public class WalletProtobufSerializer {
         // Read all keys
         for (Protos.Key keyProto : walletProto.getKeyList()) {
             if (!(keyProto.getType() == Protos.Key.Type.ORIGINAL || keyProto.getType() == Protos.Key.Type.ENCRYPTED_SCRYPT_AES)) {
-                throw new IllegalArgumentException("Unknown key type in wallet, type = " + keyProto.getType());
+                throw new UnreadableWalletException("Unknown key type in wallet, type = " + keyProto.getType());
             }
 
             byte[] privKey = keyProto.hasPrivateKey() ? keyProto.getPrivateKey().toByteArray() : null;
@@ -377,6 +431,20 @@ public class WalletProtobufSerializer {
             wallet.addKey(ecKey);
         }
 
+        List<Script> scripts = Lists.newArrayList();
+        for (Protos.Script protoScript : walletProto.getWatchedScriptList()) {
+            try {
+                Script script =
+                        new Script(protoScript.getProgram().toByteArray(),
+                                protoScript.getCreationTimestamp() / 1000);
+                scripts.add(script);
+            } catch (ScriptException e) {
+                throw new UnreadableWalletException("Unparseable script in wallet");
+            }
+        }
+
+        wallet.addWatchedScripts(scripts);
+
         // Read all transactions and insert into the txMap.
         for (Protos.Transaction txProto : walletProto.getTransactionList()) {
             readTransaction(txProto, wallet.getParams());
@@ -399,16 +467,22 @@ public class WalletProtobufSerializer {
         } else {
             wallet.setLastBlockSeenHeight(walletProto.getLastSeenBlockHeight());
         }
+        // Will default to zero if not present.
+        wallet.setLastBlockSeenTimeSecs(walletProto.getLastSeenBlockTimeSecs());
+
+        if (walletProto.hasKeyRotationTime()) {
+            wallet.setKeyRotationTime(new Date(walletProto.getKeyRotationTime() * 1000));
+        }
 
         loadExtensions(wallet, walletProto);
 
         if (walletProto.hasVersion()) {
             int version = walletProto.getVersion();
-            if (version == MultiBitWalletVersion.PROTOBUF.getWalletVersionAsInt()) {
-                wallet.setVersion(MultiBitWalletVersion.PROTOBUF);
+            if (version == FastcoinWalletVersion.PROTOBUF.getWalletVersionAsInt()) {
+                wallet.setVersion(FastcoinWalletVersion.PROTOBUF);
             } else {
-                if (version == MultiBitWalletVersion.PROTOBUF_ENCRYPTED.getWalletVersionAsInt()) {
-                    wallet.setVersion(MultiBitWalletVersion.PROTOBUF_ENCRYPTED);  
+                if (version == FastcoinWalletVersion.PROTOBUF_ENCRYPTED.getWalletVersionAsInt()) {
+                    wallet.setVersion(FastcoinWalletVersion.PROTOBUF_ENCRYPTED);
                 } else {
                     // Something from the future.
                     throw new WalletVersionException("Did not understand wallet version of '" + version + "'");
@@ -416,29 +490,34 @@ public class WalletProtobufSerializer {
             }
         } else {
             // Grandfather in as protobuf.2
-            wallet.setVersion(MultiBitWalletVersion.PROTOBUF);
+            wallet.setVersion(FastcoinWalletVersion.PROTOBUF);
         }
 
         // Make sure the object can be re-used to read another wallet without corruption.
         txMap.clear();
     }
 
-    private static void loadExtensions(Wallet wallet, Protos.Wallet walletProto) {
+    private void loadExtensions(Wallet wallet, Protos.Wallet walletProto) throws UnreadableWalletException {
         final Map<String, WalletExtension> extensions = wallet.getExtensions();
         for (Protos.Extension extProto : walletProto.getExtensionList()) {
             String id = extProto.getId();
             WalletExtension extension = extensions.get(id);
             if (extension == null) {
                 if (extProto.getMandatory()) {
-                    throw new IllegalArgumentException("Unknown mandatory extension in wallet: " + id);
+                    if (requireMandatoryExtensions)
+                        throw new UnreadableWalletException("Unknown mandatory extension in wallet: " + id);
+                    else
+                        log.error("Unknown extension in wallet {}, ignoring", id);
                 }
             } else {
                 log.info("Loading wallet extension {}", id);
                 try {
                     extension.deserializeWalletExtension(wallet, extProto.getData().toByteArray());
                 } catch (Exception e) {
-                    if (extProto.getMandatory())
-                        throw new IllegalArgumentException("Unknown mandatory extension in wallet: " + id);
+                    if (extProto.getMandatory() && requireMandatoryExtensions)
+                        throw new UnreadableWalletException("Could not parse mandatory extension in wallet: " + id);
+                    else
+                        log.error("Error whilst reading extension {}, ignoring: {}", id, e);
                 }
             }
         }
@@ -453,7 +532,7 @@ public class WalletProtobufSerializer {
         return Protos.Wallet.parseFrom(input);
     }
 
-    private void readTransaction(Protos.Transaction txProto, NetworkParameters params) {
+    private void readTransaction(Protos.Transaction txProto, NetworkParameters params) throws UnreadableWalletException {
         Transaction tx = new Transaction(params);
         if (txProto.hasUpdatedAt()) {
             tx.setUpdateTime(new Date(txProto.getUpdatedAt()));
@@ -469,7 +548,7 @@ public class WalletProtobufSerializer {
         for (Protos.TransactionInput transactionInput : txProto.getTransactionInputList()) {
             byte[] scriptBytes = transactionInput.getScriptBytes().toByteArray();
             TransactionOutPoint outpoint = new TransactionOutPoint(params,
-                    transactionInput.getTransactionOutPointIndex(),
+                    transactionInput.getTransactionOutPointIndex() & 0xFFFFFFFFL,
                     byteStringToHash(transactionInput.getTransactionOutPointHash())
             );
             TransactionInput input = new TransactionInput(params, tx, scriptBytes, outpoint);
@@ -479,32 +558,57 @@ public class WalletProtobufSerializer {
             tx.addInput(input);
         }
 
-        for (ByteString blockHash : txProto.getBlockHashList()) {
-            tx.addBlockAppearance(byteStringToHash(blockHash));
+        for (int i = 0; i < txProto.getBlockHashCount(); i++) {
+            ByteString blockHash = txProto.getBlockHash(i);
+            int relativityOffset = 0;
+            if (txProto.getBlockRelativityOffsetsCount() > 0)
+                relativityOffset = txProto.getBlockRelativityOffsets(i);
+            tx.addBlockAppearance(byteStringToHash(blockHash), relativityOffset);
         }
 
         if (txProto.hasLockTime()) {
             tx.setLockTime(0xffffffffL & txProto.getLockTime());
         }
 
+        if (txProto.hasPurpose()) {
+            switch (txProto.getPurpose()) {
+                case UNKNOWN: tx.setPurpose(Transaction.Purpose.UNKNOWN); break;
+                case USER_PAYMENT: tx.setPurpose(Transaction.Purpose.USER_PAYMENT); break;
+                case KEY_ROTATION: tx.setPurpose(Transaction.Purpose.KEY_ROTATION); break;
+                default: throw new RuntimeException("New purpose serialization not implemented");
+            }
+        } else {
+            // Old wallet: assume a user payment as that's the only reason a new tx would have been created back then.
+            tx.setPurpose(Transaction.Purpose.USER_PAYMENT);
+        }
+
         // Transaction should now be complete.
         Sha256Hash protoHash = byteStringToHash(txProto.getHash());
-        Preconditions.checkState(tx.getHash().equals(protoHash),
-                "Transaction did not deserialize completely: %s vs %s", tx.getHash(), protoHash);
-        Preconditions.checkState(!txMap.containsKey(txProto.getHash()),
-                "Wallet contained duplicate transaction %s", byteStringToHash(txProto.getHash()));
+        if (!tx.getHash().equals(protoHash))
+            throw new UnreadableWalletException(String.format("Transaction did not deserialize completely: %s vs %s", tx.getHash(), protoHash));
+        if (txMap.containsKey(txProto.getHash()))
+            throw new UnreadableWalletException("Wallet contained duplicate transaction " + byteStringToHash(txProto.getHash()));
         txMap.put(txProto.getHash(), tx);
     }
 
-    private WalletTransaction connectTransactionOutputs(org.fastcoinj.wallet.Protos.Transaction txProto) {
+    private WalletTransaction connectTransactionOutputs(org.fastcoinj.wallet.Protos.Transaction txProto) throws UnreadableWalletException {
         Transaction tx = txMap.get(txProto.getHash());
-        WalletTransaction.Pool pool = WalletTransaction.Pool.valueOf(txProto.getPool().getNumber());
-        if (pool == WalletTransaction.Pool.INACTIVE || pool == WalletTransaction.Pool.PENDING_INACTIVE) {
+        final WalletTransaction.Pool pool;
+        switch (txProto.getPool()) {
+            case DEAD: pool = WalletTransaction.Pool.DEAD; break;
+            case PENDING: pool = WalletTransaction.Pool.PENDING; break;
+            case SPENT: pool = WalletTransaction.Pool.SPENT; break;
+            case UNSPENT: pool = WalletTransaction.Pool.UNSPENT; break;
             // Upgrade old wallets: inactive pool has been merged with the pending pool.
             // Remove this some time after 0.9 is old and everyone has upgraded.
             // There should not be any spent outputs in this tx as old wallets would not allow them to be spent
             // in this state.
-            pool = WalletTransaction.Pool.PENDING;
+            case INACTIVE:
+            case PENDING_INACTIVE:
+                pool = WalletTransaction.Pool.PENDING;
+                break;
+            default:
+                throw new UnreadableWalletException("Unknown transaction pool: " + txProto.getPool());
         }
         for (int i = 0 ; i < tx.getOutputs().size() ; i++) {
             TransactionOutput output = tx.getOutputs().get(i);
@@ -512,9 +616,10 @@ public class WalletProtobufSerializer {
             if (transactionOutput.hasSpentByTransactionHash()) {
                 final ByteString spentByTransactionHash = transactionOutput.getSpentByTransactionHash();
                 Transaction spendingTx = txMap.get(spentByTransactionHash);
-                if (spendingTx == null)
-                    throw new IllegalArgumentException(String.format("Could not connect %s to %s",
+                if (spendingTx == null) {
+                    throw new UnreadableWalletException(String.format("Could not connect %s to %s",
                             tx.getHashAsString(), byteStringToHash(spentByTransactionHash)));
+                }
                 final int spendingIndex = transactionOutput.getSpentByTransactionIndex();
                 TransactionInput input = checkNotNull(spendingTx.getInput(spendingIndex));
                 input.connect(output);
@@ -531,7 +636,7 @@ public class WalletProtobufSerializer {
     }
 
     private void readConfidence(Transaction tx, Protos.TransactionConfidence confidenceProto,
-                                TransactionConfidence confidence) {
+                                TransactionConfidence confidence) throws UnreadableWalletException {
         // We are lenient here because tx confidence is not an essential part of the wallet.
         // If the tx has an unknown type of confidence, ignore.
         if (!confidenceProto.hasType()) {
@@ -543,8 +648,8 @@ public class WalletProtobufSerializer {
             case BUILDING: confidenceType = ConfidenceType.BUILDING; break;
             case DEAD: confidenceType = ConfidenceType.DEAD; break;
             // These two are equivalent (must be able to read old wallets).
-            case NOT_IN_BEST_CHAIN: confidenceType = ConfidenceType.NOT_SEEN_IN_CHAIN; break;
-            case PENDING: confidenceType = ConfidenceType.NOT_SEEN_IN_CHAIN; break;
+            case NOT_IN_BEST_CHAIN: confidenceType = ConfidenceType.PENDING; break;
+            case PENDING: confidenceType = ConfidenceType.PENDING; break;
             case UNKNOWN:
                 // Fall through.
             default:
@@ -590,7 +695,7 @@ public class WalletProtobufSerializer {
             try {
                 ip = InetAddress.getByAddress(proto.getIpAddress().toByteArray());
             } catch (UnknownHostException e) {
-                throw new RuntimeException(e);   // IP address is of invalid length.
+                throw new UnreadableWalletException("Peer IP address does not have the right length", e);
             }
             int port = proto.getPort();
             PeerAddress address = new PeerAddress(ip, port);

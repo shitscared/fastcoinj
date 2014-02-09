@@ -18,21 +18,25 @@ package com.google.fastcoin.store;
 
 import com.google.fastcoin.core.*;
 
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
  * Keeps {@link com.google.fastcoin.core.StoredBlock}s in memory. Used primarily for unit testing.
  */
 public class MemoryBlockStore implements BlockStore {
-    private Map<Sha256Hash, StoredBlock> blockMap;
+    private LinkedHashMap<Sha256Hash, StoredBlock> blockMap = new LinkedHashMap<Sha256Hash, StoredBlock>() {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<Sha256Hash, StoredBlock> eldest) {
+            return blockMap.size() > 5000;
+        }
+    };
     private StoredBlock chainHead;
 
     public MemoryBlockStore(NetworkParameters params) {
-        blockMap = new HashMap<Sha256Hash, StoredBlock>();
         // Insert the genesis block.
         try {
-            Block genesisHeader = params.genesisBlock.cloneAsHeader();
+            Block genesisHeader = params.getGenesisBlock().cloneAsHeader();
             StoredBlock storedGenesis = new StoredBlock(genesisHeader, genesisHeader.getWork(), 0);
             put(storedGenesis);
             setChainHead(storedGenesis);

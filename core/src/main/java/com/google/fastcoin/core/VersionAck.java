@@ -22,12 +22,9 @@ package com.google.fastcoin.core;
  */
 public class VersionAck extends EmptyMessage {
     public VersionAck() {
-
     }
 
-    // this is needed by the FastcoinSerializer
+    // this is needed by the BitcoinSerializer
     public VersionAck(NetworkParameters params, byte[] payload) {
-
     }
-
 }

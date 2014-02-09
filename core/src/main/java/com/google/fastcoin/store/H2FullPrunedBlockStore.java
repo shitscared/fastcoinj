@@ -21,6 +21,7 @@ import com.google.common.collect.Lists;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.annotation.Nullable;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -58,6 +59,7 @@ public class H2FullPrunedBlockStore implements FullPrunedBlockStore {
         + ")";
     static final String CHAIN_HEAD_SETTING = "chainhead";
     static final String VERIFIED_CHAIN_HEAD_SETTING = "verifiedchainhead";
+    static final String VERSION_SETTING = "version";
 
     static final String CREATE_HEADERS_TABLE = "CREATE TABLE headers ( "
         + "hash BINARY(28) NOT NULL CONSTRAINT headers_pk PRIMARY KEY,"
@@ -75,18 +77,13 @@ public class H2FullPrunedBlockStore implements FullPrunedBlockStore {
         + ")";
     static final String CREATE_UNDOABLE_TABLE_INDEX = "CREATE INDEX heightIndex ON undoableBlocks (height)";
     
-    static final String CREATE_OPEN_OUTPUT_INDEX_TABLE = "CREATE TABLE openOutputsIndex ("
-        + "hash BINARY(32) NOT NULL CONSTRAINT openOutputsIndex_pk PRIMARY KEY,"
-        + "height INT NOT NULL,"
-        + "id BIGINT NOT NULL AUTO_INCREMENT"
-        + ")";
     static final String CREATE_OPEN_OUTPUT_TABLE = "CREATE TABLE openOutputs ("
-        + "id BIGINT NOT NULL,"
+        + "hash BINARY(32) NOT NULL,"
         + "index INT NOT NULL,"
+        + "height INT NOT NULL,"
         + "value BLOB NOT NULL,"
         + "scriptBytes BLOB NOT NULL,"
-        + "PRIMARY KEY (id, index),"
-        + "CONSTRAINT openOutputs_fk FOREIGN KEY (id) REFERENCES openOutputsIndex(id)"
+        + "PRIMARY KEY (hash, index),"
         + ")";
 
     /**
@@ -99,7 +96,9 @@ public class H2FullPrunedBlockStore implements FullPrunedBlockStore {
     public H2FullPrunedBlockStore(NetworkParameters params, String dbName, int fullStoreDepth) throws BlockStoreException {
         this.params = params;
         this.fullStoreDepth = fullStoreDepth;
-        connectionURL = "jdbc:h2:" + dbName + ";create=true";
+        // We choose a very lax timeout to avoid the database throwing exceptions on complex operations, as time is not
+        // a particularly precious resource when just keeping up with the chain.
+        connectionURL = "jdbc:h2:" + dbName + ";create=true;LOCK_TIMEOUT=60000";
         
         conn = new ThreadLocal<Connection>();
         allConnections = new LinkedList<Connection>();
@@ -177,7 +176,6 @@ public class H2FullPrunedBlockStore implements FullPrunedBlockStore {
             s.executeUpdate("DROP TABLE headers");
             s.executeUpdate("DROP TABLE undoableBlocks");
             s.executeUpdate("DROP TABLE openOutputs");
-            s.executeUpdate("DROP TABLE openOutputsIndex");
             s.close();
             createTables();
             initFromDatabase();
@@ -200,21 +198,24 @@ public class H2FullPrunedBlockStore implements FullPrunedBlockStore {
         log.debug("H2FullPrunedBlockStore : CREATE undoable block index");
         s.executeUpdate(CREATE_UNDOABLE_TABLE_INDEX);
         
-        log.debug("H2FullPrunedBlockStore : CREATE open output index table");
-        s.executeUpdate(CREATE_OPEN_OUTPUT_INDEX_TABLE);
-        
         log.debug("H2FullPrunedBlockStore : CREATE open output table");
         s.executeUpdate(CREATE_OPEN_OUTPUT_TABLE);
 
         s.executeUpdate("INSERT INTO settings(name, value) VALUES('" + CHAIN_HEAD_SETTING + "', NULL)");
         s.executeUpdate("INSERT INTO settings(name, value) VALUES('" + VERIFIED_CHAIN_HEAD_SETTING + "', NULL)");
+        s.executeUpdate("INSERT INTO settings(name, value) VALUES('" + VERSION_SETTING + "', '03')");
         s.close();
         createNewStore(params);
     }
 
     private void initFromDatabase() throws SQLException, BlockStoreException {
         Statement s = conn.get().createStatement();
-        ResultSet rs = s.executeQuery("SELECT value FROM settings WHERE name = '" + CHAIN_HEAD_SETTING + "'");
+        ResultSet rs = s.executeQuery("SHOW TABLES");
+        while (rs.next())
+            if (rs.getString(1).equalsIgnoreCase("openOutputsIndex"))
+                throw new BlockStoreException("Attempted to open a H2 database with an old schema, please reset database.");
+        
+        rs = s.executeQuery("SELECT value FROM settings WHERE name = '" + CHAIN_HEAD_SETTING + "'");
         if (!rs.next()) {
             throw new BlockStoreException("corrupt H2 block store - no chain head pointer");
         }
@@ -246,11 +247,11 @@ public class H2FullPrunedBlockStore implements FullPrunedBlockStore {
         try {
             // Set up the genesis block. When we start out fresh, it is by
             // definition the top of the chain.
-            StoredBlock storedGenesisHeader = new StoredBlock(params.genesisBlock.cloneAsHeader(), params.genesisBlock.getWork(), 0);
+            StoredBlock storedGenesisHeader = new StoredBlock(params.getGenesisBlock().cloneAsHeader(), params.getGenesisBlock().getWork(), 0);
             // The coinbase in the genesis block is not spendable. This is because of how the reference client inits
             // its database - the genesis transaction isn't actually in the db so its spent flags can never be updated.
             List<Transaction> genesisTransactions = Lists.newLinkedList();
-            StoredUndoableBlock storedGenesis = new StoredUndoableBlock(params.genesisBlock.getHash(), genesisTransactions);
+            StoredUndoableBlock storedGenesis = new StoredUndoableBlock(params.getGenesisBlock().getHash(), genesisTransactions);
             put(storedGenesisHeader, storedGenesis);
             setChainHead(storedGenesisHeader);
             setVerifiedChainHead(storedGenesisHeader);
@@ -322,22 +323,12 @@ public class H2FullPrunedBlockStore implements FullPrunedBlockStore {
         System.out.printf("Undoable Blocks size: %d, count: %d, average size: %f%n", size, count, (double)size/count);
         
         totalSize += size; size = 0; count = 0;
-        rs = s.executeQuery("SELECT id FROM openOutputsIndex");
-        while (rs.next()) {
-            size += 32; // hash
-            size += 4; // height
-            size += 8; // id
-            count++;
-        }
-        rs.close();
-        System.out.printf("Open Outputs Index size: %d, count: %d, size in id indexes: %d%n", size, count, count * 8);
-        
-        totalSize += size; size = 0; count = 0;
         long scriptSize = 0;
         rs = s.executeQuery("SELECT value, scriptBytes FROM openOutputs");
         while (rs.next()) {
-            size += 8; // id
+            size += 32; // hash
             size += 4; // index
+            size += 4; // height
             size += rs.getBytes(1).length;
             size += rs.getBytes(2).length;
             scriptSize += rs.getBytes(2).length;
@@ -365,7 +356,7 @@ public class H2FullPrunedBlockStore implements FullPrunedBlockStore {
             s.setBytes(1, hashBytes);
             s.setBytes(2, storedBlock.getChainWork().toByteArray());
             s.setInt(3, storedBlock.getHeight());
-            s.setBytes(4, storedBlock.getHeader().unsafefastcoinSerialize());
+            s.setBytes(4, storedBlock.getHeader().unsafeFastcoinSerialize());
             s.setBoolean(5, wasUndoable);
             s.executeUpdate();
             s.close();
@@ -468,6 +459,7 @@ public class H2FullPrunedBlockStore implements FullPrunedBlockStore {
         }
     }
 
+    @Nullable
     public StoredBlock get(Sha256Hash hash, boolean wasUndoableOnly) throws BlockStoreException {
         // Optimize for chain head
         if (chainHeadHash != null && chainHeadHash.equals(hash))
@@ -477,8 +469,7 @@ public class H2FullPrunedBlockStore implements FullPrunedBlockStore {
         maybeConnect();
         PreparedStatement s = null;
         try {
-            s = conn.get()
-                .prepareStatement("SELECT chainWork, height, header, wasUndoable FROM headers WHERE hash = ?");
+            s = conn.get().prepareStatement("SELECT chainWork, height, header, wasUndoable FROM headers WHERE hash = ?");
             // We skip the first 4 bytes because (on prodnet) the minimum target has 4 0-bytes
             byte[] hashBytes = new byte[28];
             System.arraycopy(hash.getBytes(), 3, hashBytes, 0, 28);
@@ -488,41 +479,44 @@ public class H2FullPrunedBlockStore implements FullPrunedBlockStore {
                 return null;
             }
             // Parse it.
-            
             if (wasUndoableOnly && !results.getBoolean(4))
                 return null;
-            
             BigInteger chainWork = new BigInteger(results.getBytes(1));
             int height = results.getInt(2);
             Block b = new Block(params, results.getBytes(3));
-            //b.verifyHeader();
-            StoredBlock stored = new StoredBlock(b, chainWork, height);
-            return stored;
+            b.verifyHeader();
+            return new StoredBlock(b, chainWork, height);
         } catch (SQLException ex) {
             throw new BlockStoreException(ex);
         } catch (ProtocolException e) {
             // Corrupted database.
             throw new BlockStoreException(e);
-        //} catch (VerificationException e) {
+        } catch (VerificationException e) {
             // Should not be able to happen unless the database contains bad
             // blocks.
-          //  throw new BlockStoreException(e);
+            throw new BlockStoreException(e);
         } finally {
-            if (s != null)
+            if (s != null) {
                 try {
                     s.close();
-                } catch (SQLException e) { throw new BlockStoreException("Failed to close PreparedStatement"); }
+                } catch (SQLException e) {
+                    throw new BlockStoreException("Failed to close PreparedStatement");
+                }
+            }
         }
     }
     
+    @Nullable
     public StoredBlock get(Sha256Hash hash) throws BlockStoreException {
         return get(hash, false);
     }
     
+    @Nullable
     public StoredBlock getOnceUndoableStoredBlock(Sha256Hash hash) throws BlockStoreException {
         return get(hash, true);
     }
     
+    @Nullable
     public StoredUndoableBlock getUndoBlock(Sha256Hash hash) throws BlockStoreException {
         maybeConnect();
         PreparedStatement s = null;
@@ -639,14 +633,14 @@ public class H2FullPrunedBlockStore implements FullPrunedBlockStore {
         }
     }
 
+    @Nullable
     public StoredTransactionOutput getTransactionOutput(Sha256Hash hash, long index) throws BlockStoreException {
         maybeConnect();
         PreparedStatement s = null;
         try {
             s = conn.get()
-                .prepareStatement("SELECT openOutputsIndex.height, openOutputs.value, openOutputs.scriptBytes " +
-                		"FROM openOutputsIndex NATURAL JOIN openOutputs " +
-                		"WHERE openOutputsIndex.hash = ? AND openOutputs.index = ?");
+                .prepareStatement("SELECT height, value, scriptBytes FROM openOutputs " +
+                        "WHERE hash = ? AND index = ?");
             s.setBytes(1, hash.getBytes());
             // index is actually an unsigned int
             s.setInt(2, (int)index);
@@ -658,8 +652,7 @@ public class H2FullPrunedBlockStore implements FullPrunedBlockStore {
             int height = results.getInt(1);
             BigInteger value = new BigInteger(results.getBytes(2));
             // Tell the StoredTransactionOutput that we are a coinbase, as that is encoded in height
-            StoredTransactionOutput txout = new StoredTransactionOutput(hash, index, value, height, true, results.getBytes(3));
-            return txout;
+            return new StoredTransactionOutput(hash, index, value, height, true, results.getBytes(3));
         } catch (SQLException ex) {
             throw new BlockStoreException(ex);
         } finally {
@@ -674,28 +667,14 @@ public class H2FullPrunedBlockStore implements FullPrunedBlockStore {
         maybeConnect();
         PreparedStatement s = null;
         try {
-            try {
-                s = conn.get().prepareStatement("INSERT INTO openOutputsIndex(hash, height)"
-                        + " VALUES(?, ?)");
-                s.setBytes(1, out.getHash().getBytes());
-                s.setInt(2, out.getHeight());
-                s.executeUpdate();
-            } catch (SQLException e) {
-                if (e.getErrorCode() != 23505)
-                    throw e;
-            } finally {
-                if (s != null)
-                    s.close();
-            }
-            
-            s = conn.get().prepareStatement("INSERT INTO openOutputs (id, index, value, scriptBytes) " +
-            		"VALUES ((SELECT id FROM openOutputsIndex WHERE hash = ?), " +
-            		"?, ?, ?)");
+            s = conn.get().prepareStatement("INSERT INTO openOutputs (hash, index, height, value, scriptBytes) " +
+                    "VALUES (?, ?, ?, ?, ?)");
             s.setBytes(1, out.getHash().getBytes());
             // index is actually an unsigned int
             s.setInt(2, (int)out.getIndex());
-            s.setBytes(3, out.getValue().toByteArray());
-            s.setBytes(4, out.getScriptBytes());
+            s.setInt(3, out.getHeight());
+            s.setBytes(4, out.getValue().toByteArray());
+            s.setBytes(5, out.getScriptBytes());
             s.executeUpdate();
             s.close();
         } catch (SQLException e) {
@@ -711,27 +690,17 @@ public class H2FullPrunedBlockStore implements FullPrunedBlockStore {
 
     public void removeUnspentTransactionOutput(StoredTransactionOutput out) throws BlockStoreException {
         maybeConnect();
-        // TODO: This should only need one query (maybe a stored procedure)
-        if (getTransactionOutput(out.getHash(), out.getIndex()) == null)
-            throw new BlockStoreException("Tried to remove a StoredTransactionOutput from H2FullPrunedBlockStore that it didn't have!");
         try {
             PreparedStatement s = conn.get()
-                .prepareStatement("DELETE FROM openOutputs " +
-                		"WHERE id = (SELECT id FROM openOutputsIndex WHERE hash = ?) AND index = ?");
+                .prepareStatement("DELETE FROM openOutputs WHERE hash = ? AND index = ?");
             s.setBytes(1, out.getHash().getBytes());
             // index is actually an unsigned int
             s.setInt(2, (int)out.getIndex());
             s.executeUpdate();
+            int updateCount = s.getUpdateCount();
             s.close();
-            
-            // This is quite an ugly query, is there no better way?
-            s = conn.get().prepareStatement("DELETE FROM openOutputsIndex " +
-                            "WHERE hash = ? AND 1 = (CASE WHEN ((SELECT COUNT(*) FROM openOutputs WHERE id =" +
-                            "(SELECT id FROM openOutputsIndex WHERE hash = ?)) = 0) THEN 1 ELSE 0 END)");
-            s.setBytes(1, out.getHash().getBytes());
-            s.setBytes(2, out.getHash().getBytes());
-            s.executeUpdate();
-            s.close();
+            if (updateCount == 0)
+                throw new BlockStoreException("Tried to remove a StoredTransactionOutput from H2FullPrunedBlockStore that it didn't have!");
         } catch (SQLException e) {
             throw new BlockStoreException(e);
         }
@@ -771,8 +740,7 @@ public class H2FullPrunedBlockStore implements FullPrunedBlockStore {
         PreparedStatement s = null;
         try {
             s = conn.get()
-                .prepareStatement("SELECT COUNT(*) FROM openOutputsIndex " +
-                        "WHERE hash = ?");
+                .prepareStatement("SELECT COUNT(*) FROM openOutputs WHERE hash = ?");
             s.setBytes(1, hash.getBytes());
             ResultSet results = s.executeQuery();
             if (!results.next()) {

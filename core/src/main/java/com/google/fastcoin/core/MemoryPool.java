@@ -16,15 +16,17 @@
 
 package com.google.fastcoin.core;
 
-import com.google.fastcoin.utils.Locks;
+import com.google.fastcoin.utils.Threading;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.annotation.Nullable;
 import java.lang.ref.Reference;
 import java.lang.ref.ReferenceQueue;
 import java.lang.ref.WeakReference;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -44,11 +46,12 @@ import static com.google.common.base.Preconditions.checkState;
  */
 public class MemoryPool {
     private static final Logger log = LoggerFactory.getLogger(MemoryPool.class);
-    protected ReentrantLock lock = Locks.lock("mempool");
+    protected ReentrantLock lock = Threading.lock("mempool");
 
     // For each transaction we may have seen:
     //   - only its hash in an inv packet
-    //   - the full transaction itself, if we asked for it to be sent to us (or a peer sent it regardless)
+    //   - the full transaction itself, if we asked for it to be sent to us (or a peer sent it regardless), or if we
+    //     sent it.
     //
     // Before we see the full transaction, we need to track how many peers advertised it, so we can estimate its
     // confidence pre-chain inclusion assuming an un-tampered with network connection. After we see the full transaction
@@ -87,16 +90,14 @@ public class MemoryPool {
      * @param size Max number of transactions to track. The pool will fill up to this size then stop growing.
      */
     public MemoryPool(final int size) {
-        memoryPool = new LinkedHashMap<Sha256Hash, Entry>();
-
-        /*{
+        memoryPool = new LinkedHashMap<Sha256Hash, Entry>() {
             @Override
             protected boolean removeEldestEntry(Map.Entry<Sha256Hash, Entry> entry) {
                 // An arbitrary choice to stop the memory used by tracked transactions getting too huge in the event
                 // of some kind of DoS attack.
                 return size() > size;
             }
-        };*/
+        };
         referenceQueue = new ReferenceQueue<Transaction>();
     }
 
@@ -163,37 +164,27 @@ public class MemoryPool {
     }
 
     /**
-     * Called by peers when they receive a "tx" message containing a valid serialized transaction.
-     * @param tx The TX deserialized from the wire.
-     * @param byPeer The Peer that received it.
-     * @return An object that is semantically the same TX but may be a different object instance.
+     * Puts the tx into the table and returns either it, or a different Transaction object that has the same hash.
+     * Unlike seen and the other methods, this one does not imply that a tx has been announced by a peer and does
+     * not mark it as such.
      */
-    public Transaction seen(Transaction tx, PeerAddress byPeer) {
-        boolean skipUnlock = false;
+    public Transaction intern(Transaction tx) {
         lock.lock();
         try {
             cleanPool();
             Entry entry = memoryPool.get(tx.getHash());
             if (entry != null) {
-                // This TX or its hash have been previously announced.
+                // This TX or its hash have been previously interned.
                 if (entry.tx != null) {
-                    // We already downloaded it.
+                    // We already interned it (but may have thrown it away).
                     checkState(entry.addresses == null);
                     // We only want one canonical object instance for a transaction no matter how many times it is
                     // deserialized.
                     Transaction transaction = entry.tx.get();
-                    if (transaction == null) {
-                        // We previously downloaded this transaction, but the garbage collector threw it away because
-                        // no other part of the system cared enough to keep it around (it's not relevant to us).
-                        // Given the lack of interest last time we probably don't need to track it this time either.
-                        log.info("{}: Provided with a transaction that we previously threw away: {}", byPeer, tx.getHash());
-                    } else {
+                    if (transaction != null) {
                         // We saw it before and kept it around. Hand back the canonical copy.
                         tx = transaction;
-                        log.info("{}: Provided with a transaction downloaded before: [{}] {}",
-                                new Object[]{byPeer, tx.getConfidence().numBroadcastPeers(), tx.getHash()});
                     }
-                    markBroadcast(byPeer, tx);
                     return tx;
                 } else {
                     // We received a transaction that we have previously seen announced but not downloaded until now.
@@ -202,31 +193,41 @@ public class MemoryPool {
                     Set<PeerAddress> addrs = entry.addresses;
                     entry.addresses = null;
                     TransactionConfidence confidence = tx.getConfidence();
-                    log.debug("{}: Adding tx [{}] {} to the memory pool",
-                            new Object[]{byPeer, confidence.numBroadcastPeers(), tx.getHashAsString()});
-                    // Copy the previously announced peers into the confidence and then clear it out. Unlock here
-                    // because markBroadcastBy can trigger event listeners and thus inversions. After the lock is
-                    // released "entry" may be changing arbitrarily and isn't usable.
-                    skipUnlock = true;
-                    lock.unlock();
+                    log.debug("Adding tx [{}] {} to the memory pool",
+                            confidence.numBroadcastPeers(), tx.getHashAsString());
                     for (PeerAddress a : addrs) {
-                        confidence.markBroadcastBy(a);
+                        markBroadcast(a, tx);
                     }
                     return tx;
                 }
             } else {
                 // This often happens when we are downloading a Bloom filtered chain, or recursively downloading
                 // dependencies of a relevant transaction (see Peer.downloadDependencies).
-                log.debug("{}: Provided with a downloaded transaction we didn't see announced yet: {}",
-                        byPeer, tx.getHashAsString());
+                log.debug("Provided with a downloaded transaction we didn't see announced yet: {}", tx.getHashAsString());
                 entry = new Entry();
                 entry.tx = new WeakTransactionReference(tx, referenceQueue);
                 memoryPool.put(tx.getHash(), entry);
-                markBroadcast(byPeer, tx);
                 return tx;
             }
         } finally {
-            if (!skipUnlock) lock.unlock();
+            lock.unlock();
+        }
+    }
+
+    /**
+     * Called by peers when they receive a "tx" message containing a valid serialized transaction.
+     * @param tx The TX deserialized from the wire.
+     * @param byPeer The Peer that received it.
+     * @return An object that is semantically the same TX but may be a different object instance.
+     */
+    public Transaction seen(Transaction tx, PeerAddress byPeer) {
+        lock.lock();
+        try {
+            final Transaction interned = intern(tx);
+            markBroadcast(byPeer, interned);
+            return interned;
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -246,17 +247,17 @@ public class MemoryPool {
                     Transaction tx = entry.tx.get();
                     if (tx != null) {
                         markBroadcast(byPeer, tx);
-                        log.debug("{}: Announced transaction we have seen before [{}] {}",
-                                new Object[]{byPeer, tx.getConfidence().numBroadcastPeers(), tx.getHashAsString()});
+                        log.debug("{}: Peer announced transaction we have seen before [{}] {}",
+                                byPeer, tx.getConfidence().numBroadcastPeers(), tx.getHashAsString());
                     } else {
-                        // The inv is telling us about a transaction that we previously downloaded, and threw away because
-                        // nothing found it interesting enough to keep around. So do nothing.
+                        // The inv is telling us about a transaction that we previously downloaded, and threw away
+                        // because nothing found it interesting enough to keep around. So do nothing.
                     }
                 } else {
                     checkNotNull(entry.addresses);
                     entry.addresses.add(byPeer);
-                    log.debug("{}: Announced transaction we have seen announced before [{}] {}",
-                            new Object[]{byPeer, entry.addresses.size(), hash});
+                    log.debug("{}: Peer announced transaction we have seen announced before [{}] {}",
+                            byPeer, entry.addresses.size(), hash);
                 }
             } else {
                 // This TX has never been seen before.
@@ -265,7 +266,7 @@ public class MemoryPool {
                 entry.addresses = new HashSet<PeerAddress>();
                 entry.addresses.add(byPeer);
                 memoryPool.put(hash, entry);
-                log.info("{}: Announced new transaction [1] {}", byPeer, hash);
+                log.info("{}: Peer announced new transaction [1] {}", byPeer, hash);
             }
         } finally {
             lock.unlock();
@@ -273,15 +274,10 @@ public class MemoryPool {
     }
 
     private void markBroadcast(PeerAddress byPeer, Transaction tx) {
-        // Marking a TX as broadcast by a peer can run event listeners that might call back into Peer or PeerGroup.
-        // Thus we unlock ourselves here to avoid potential inversions.
-        checkState(lock.isLocked());
-        lock.unlock();
-        try {
-            tx.getConfidence().markBroadcastBy(byPeer);
-        } finally {
-            lock.lock();
-        }
+        checkState(lock.isHeldByCurrentThread());
+        final TransactionConfidence confidence = tx.getConfidence();
+        if (confidence.markBroadcastBy(byPeer))
+            confidence.queueListeners(TransactionConfidence.Listener.ChangeReason.SEEN_PEERS);
     }
 
     /**
@@ -289,6 +285,7 @@ public class MemoryPool {
      * we only saw advertisements for it yet or it has been downloaded but garbage collected due to nowhere else
      * holding a reference to it.
      */
+    @Nullable
     public Transaction get(Sha256Hash hash) {
         lock.lock();
         try {

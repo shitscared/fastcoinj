@@ -16,15 +16,18 @@
 
 package com.google.fastcoin.core;
 
+import com.google.fastcoin.script.Script;
 import com.google.fastcoin.store.BlockStoreException;
 import com.google.fastcoin.store.FullPrunedBlockStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.annotation.Nullable;
 import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.ListIterator;
 import java.util.concurrent.*;
 
 import static com.google.common.base.Preconditions.checkState;
@@ -42,6 +45,9 @@ public class FullPrunedBlockChain extends AbstractBlockChain {
     
     /** Keeps a map of block hashes to StoredBlocks. */
     protected final FullPrunedBlockStore blockStore;
+
+    // Whether or not to execute scriptPubKeys before accepting a transaction (i.e. check signatures).
+    private boolean runScripts = true;
 
     /**
      * Constructs a BlockChain connected to the given wallet and store. To obtain a {@link Wallet} you can construct
@@ -92,15 +98,52 @@ public class FullPrunedBlockChain extends AbstractBlockChain {
     protected boolean shouldVerifyTransactions() {
         return true;
     }
+
+    /**
+     * Whether or not to run scripts whilst accepting blocks (i.e. checking signatures, for most transactions).
+     * If you're accepting data from an untrusted node, such as one found via the P2P network, this should be set
+     * to true (which is the default). If you're downloading a chain from a node you control, script execution
+     * is redundant because you know the connected node won't relay bad data to you. In that case it's safe to set
+     * this to false and obtain a significant speedup.
+     */
+    public void setRunScripts(boolean value) {
+        this.runScripts = value;
+    }
     
     //TODO: Remove lots of duplicated code in the two connectTransactions
     
+    // TODO: execute in order of largest transaction (by input count) first
     ExecutorService scriptVerificationExecutor = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
+
+    /** A job submitted to the executor which verifies signatures. */
+    private static class Verifier implements Callable<VerificationException> {
+        final Transaction tx;
+        final List<Script> prevOutScripts;
+        final boolean enforcePayToScriptHash;
+
+        public Verifier(final Transaction tx, final List<Script> prevOutScripts, final boolean enforcePayToScriptHash) {
+            this.tx = tx; this.prevOutScripts = prevOutScripts; this.enforcePayToScriptHash = enforcePayToScriptHash;
+        }
+
+        @Nullable
+        @Override
+        public VerificationException call() throws Exception {
+            try{
+                ListIterator<Script> prevOutIt = prevOutScripts.listIterator();
+                for (int index = 0; index < tx.getInputs().size(); index++) {
+                    tx.getInputs().get(index).getScriptSig().correctlySpends(tx, index, prevOutIt.next(), enforcePayToScriptHash);
+                }
+            } catch (VerificationException e) {
+                return e;
+            }
+            return null;
+        }
+    }
     
     @Override
     protected TransactionOutputChanges connectTransactions(int height, Block block)
             throws VerificationException, BlockStoreException {
-        checkState(lock.isLocked());
+        checkState(lock.isHeldByCurrentThread());
         if (block.transactions == null)
             throw new RuntimeException("connectTransactions called with Block that didn't have transactions!");
         if (!params.passesCheckpoint(height, block.getHash()))
@@ -111,7 +154,7 @@ public class FullPrunedBlockChain extends AbstractBlockChain {
         LinkedList<StoredTransactionOutput> txOutsSpent = new LinkedList<StoredTransactionOutput>();
         LinkedList<StoredTransactionOutput> txOutsCreated = new LinkedList<StoredTransactionOutput>();  
         long sigOps = 0;
-        final boolean enforceBIP16 = block.getTimeSeconds() >= NetworkParameters.BIP16_ENFORCE_TIME;
+        final boolean enforcePayToScriptHash = block.getTimeSeconds() >= NetworkParameters.BIP16_ENFORCE_TIME;
         
         if (scriptVerificationExecutor.isShutdown())
             scriptVerificationExecutor = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
@@ -128,16 +171,17 @@ public class FullPrunedBlockChain extends AbstractBlockChain {
                     // being added twice (bug) or the block is a BIP30 violator.
                     if (blockStore.hasUnspentOutputs(hash, tx.getOutputs().size()))
                         throw new VerificationException("Block failed BIP30 test!");
-                    if (enforceBIP16) // We already check non-BIP16 sigops in Block.verifyTransactions(true)
+                    if (enforcePayToScriptHash) // We already check non-BIP16 sigops in Block.verifyTransactions(true)
                         sigOps += tx.getSigOpCount();
                 }
             }
             BigInteger totalFees = BigInteger.ZERO;
             BigInteger coinbaseValue = null;
-            for (Transaction tx : block.transactions) {
+            for (final Transaction tx : block.transactions) {
                 boolean isCoinBase = tx.isCoinBase();
                 BigInteger valueIn = BigInteger.ZERO;
                 BigInteger valueOut = BigInteger.ZERO;
+                final List<Script> prevOutScripts = new LinkedList<Script>();
                 if (!isCoinBase) {
                     // For each input of the transaction remove the corresponding output from the set of unspent
                     // outputs.
@@ -154,39 +198,14 @@ public class FullPrunedBlockChain extends AbstractBlockChain {
                             throw new VerificationException("Tried to spend coinbase at depth " + (height - prevOut.getHeight()));
                         // TODO: Check we're not spending the genesis transaction here. Satoshis code won't allow it.
                         valueIn = valueIn.add(prevOut.getValue());
-                        if (enforceBIP16) {
-                            if (new Script(params, prevOut.getScriptBytes(), 0, prevOut.getScriptBytes().length).isPayToScriptHash())
+                        if (enforcePayToScriptHash) {
+                            if (new Script(prevOut.getScriptBytes()).isPayToScriptHash())
                                 sigOps += Script.getP2SHSigOpCount(in.getScriptBytes());
                             if (sigOps > Block.MAX_BLOCK_SIGOPS)
                                 throw new VerificationException("Too many P2SH SigOps in block");
                         }
                         
-                        // All of these copies are terribly ugly, however without them,
-                        // I see some odd concurrency issues where scripts throw exceptions
-                        // (mostly "Attempted OP_* on empty stack" or similar) when they shouldn't.
-                        // In my tests, total time spent in com.google.fastcoin.core when
-                        // downloading the chain is < 0.5%, so doing this is no big efficiency issue.
-                        // TODO: Find out the underlying issue and create a better work-around
-                        final int currentIndex = index;
-                        final Transaction txCache;
-                        try {
-                            txCache = new Transaction(params, tx.unsafefastcoinSerialize());
-                        } catch (ProtocolException e1) {
-                            throw new RuntimeException(e1);
-                        }
-                        final Script scriptSig = in.getScriptSig();
-                        final Script scriptPubKey = new Script(params, prevOut.getScriptBytes(), 0, prevOut.getScriptBytes().length);
-                        FutureTask<VerificationException> future = new FutureTask<VerificationException>(new Callable<VerificationException>() {
-                            public VerificationException call() {
-                                try{
-                                    scriptSig.correctlySpends(txCache, currentIndex, scriptPubKey, enforceBIP16);
-                                } catch (VerificationException e) {
-                                    return e;
-                                }
-                                return null;
-                            }});
-                        scriptVerificationExecutor.execute(future);
-                        listScriptVerificationResults.add(future);
+                        prevOutScripts.add(new Script(prevOut.getScriptBytes()));
                         
                         //in.getScriptSig().correctlySpends(tx, index, new Script(params, prevOut.getScriptBytes(), 0, prevOut.getScriptBytes().length));
                         
@@ -214,6 +233,13 @@ public class FullPrunedBlockChain extends AbstractBlockChain {
                         throw new VerificationException("Transaction input value out of range");
                     totalFees = totalFees.add(valueIn.subtract(valueOut));
                 }
+                
+                if (!isCoinBase && runScripts) {
+                    // Because correctlySpends modifies transactions, this must come after we are done with tx
+                    FutureTask<VerificationException> future = new FutureTask<VerificationException>(new Verifier(tx, prevOutScripts, enforcePayToScriptHash));
+                    scriptVerificationExecutor.execute(future);
+                    listScriptVerificationResults.add(future);
+                }
             }
             if (totalFees.compareTo(params.MAX_MONEY) > 0 || block.getBlockInflation(height).add(totalFees).compareTo(coinbaseValue) < 0)
                 throw new VerificationException("Transaction fees out of range");
@@ -225,7 +251,7 @@ public class FullPrunedBlockChain extends AbstractBlockChain {
                     throw new RuntimeException(thrownE); // Shouldn't happen
                 } catch (ExecutionException thrownE) {
                     log.error("Script.correctlySpends threw a non-normal exception: " + thrownE.getCause());
-                    throw new VerificationException("Bug in Script.correctlySpends, likely script malformed in some new and interesting way.");
+                    throw new VerificationException("Bug in Script.correctlySpends, likely script malformed in some new and interesting way.", thrownE);
                 }
                 if (e != null)
                     throw e;
@@ -248,7 +274,7 @@ public class FullPrunedBlockChain extends AbstractBlockChain {
      */
     protected synchronized TransactionOutputChanges connectTransactions(StoredBlock newBlock)
             throws VerificationException, BlockStoreException, PrunedException {
-        checkState(lock.isLocked());
+        checkState(lock.isHeldByCurrentThread());
         if (!params.passesCheckpoint(newBlock.getHeight(), newBlock.getHeader().getHash()))
             throw new VerificationException("Block failed checkpoint lockin at " + newBlock.getHeight());
         
@@ -284,6 +310,7 @@ public class FullPrunedBlockChain extends AbstractBlockChain {
                     boolean isCoinBase = tx.isCoinBase();
                     BigInteger valueIn = BigInteger.ZERO;
                     BigInteger valueOut = BigInteger.ZERO;
+                    final List<Script> prevOutScripts = new LinkedList<Script>();
                     if (!isCoinBase) {
                         for (int index = 0; index < tx.getInputs().size(); index++) {
                             final TransactionInput in = tx.getInputs().get(index);
@@ -295,35 +322,14 @@ public class FullPrunedBlockChain extends AbstractBlockChain {
                                 throw new VerificationException("Tried to spend coinbase at depth " + (newBlock.getHeight() - prevOut.getHeight()));
                             valueIn = valueIn.add(prevOut.getValue());
                             if (enforcePayToScriptHash) {
-                                Script script = new Script(params, prevOut.getScriptBytes(), 0, prevOut.getScriptBytes().length);
+                                Script script = new Script(prevOut.getScriptBytes());
                                 if (script.isPayToScriptHash())
                                     sigOps += Script.getP2SHSigOpCount(in.getScriptBytes());
                                 if (sigOps > Block.MAX_BLOCK_SIGOPS)
                                     throw new VerificationException("Too many P2SH SigOps in block");
                             }
                             
-                            // All of these copies are terribly ugly, however without them,
-                            // I see some odd concurrency issues where scripts throw exceptions
-                            // (mostly "Attempted OP_* on empty stack" or similar) when they shouldn't.
-                            // In my tests, total time spent in com.google.fastcoin.core when
-                            // downloading the chain is < 0.5%, so doing this is no big efficiency issue.
-                            // TODO: Find out the underlying issue and create a better work-around
-                            // TODO: Thoroughly test that this fixes the issue like the non-StoredBlock version does
-                            final int currentIndex = index;
-                            final Script scriptSig  = in.getScriptSig();
-                            final Script scriptPubKey = new Script(params, prevOut.getScriptBytes(), 0, prevOut.getScriptBytes().length);
-                            FutureTask<VerificationException> future = new FutureTask<VerificationException>(new Callable<VerificationException>() {
-                                public VerificationException call() {
-                                    try{
-                                        scriptSig.correctlySpends(tx, currentIndex, scriptPubKey, enforcePayToScriptHash);
-                                    } catch (VerificationException e) {
-                                        return e;
-                                    }
-                                    return null;
-                                }
-                            });
-                            scriptVerificationExecutor.execute(future);
-                            listScriptVerificationResults.add(future);
+                            prevOutScripts.add(new Script(prevOut.getScriptBytes()));
                             
                             blockStore.removeUnspentTransactionOutput(prevOut);
                             txOutsSpent.add(prevOut);
@@ -349,6 +355,13 @@ public class FullPrunedBlockChain extends AbstractBlockChain {
                             throw new VerificationException("Transaction input value out of range");
                         totalFees = totalFees.add(valueIn.subtract(valueOut));
                     }
+                    
+                    if (!isCoinBase) {
+                        // Because correctlySpends modifies transactions, this must come after we are done with tx
+                        FutureTask<VerificationException> future = new FutureTask<VerificationException>(new Verifier(tx, prevOutScripts, enforcePayToScriptHash));
+                        scriptVerificationExecutor.execute(future);
+                        listScriptVerificationResults.add(future);
+                    }
                 }
                 if (totalFees.compareTo(params.MAX_MONEY) > 0 ||
                         newBlock.getHeader().getBlockInflation(newBlock.getHeight()).add(totalFees).compareTo(coinbaseValue) < 0)
@@ -362,7 +375,7 @@ public class FullPrunedBlockChain extends AbstractBlockChain {
                         throw new RuntimeException(thrownE); // Shouldn't happen
                     } catch (ExecutionException thrownE) {
                         log.error("Script.correctlySpends threw a non-normal exception: " + thrownE.getCause());
-                        throw new VerificationException("Bug in Script.correctlySpends, likely script malformed in some new and interesting way.");
+                        throw new VerificationException("Bug in Script.correctlySpends, likely script malformed in some new and interesting way.", thrownE);
                     }
                     if (e != null)
                         throw e;
@@ -398,7 +411,7 @@ public class FullPrunedBlockChain extends AbstractBlockChain {
      */
     @Override
     protected void disconnectTransactions(StoredBlock oldBlock) throws PrunedException, BlockStoreException {
-        checkState(lock.isLocked());
+        checkState(lock.isHeldByCurrentThread());
         blockStore.beginDatabaseBatchWrite();
         try {
             StoredUndoableBlock undoBlock = blockStore.getUndoBlock(oldBlock.getHeader().getHash());
@@ -419,7 +432,7 @@ public class FullPrunedBlockChain extends AbstractBlockChain {
 
     @Override
     protected void doSetChainHead(StoredBlock chainHead) throws BlockStoreException {
-        checkState(lock.isLocked());
+        checkState(lock.isHeldByCurrentThread());
         blockStore.setVerifiedChainHead(chainHead);
         blockStore.commitDatabaseBatchWrite();
     }
@@ -431,7 +444,7 @@ public class FullPrunedBlockChain extends AbstractBlockChain {
 
     @Override
     protected StoredBlock getStoredBlockInCurrentScope(Sha256Hash hash) throws BlockStoreException {
-        checkState(lock.isLocked());
+        checkState(lock.isHeldByCurrentThread());
         return blockStore.getOnceUndoableStoredBlock(hash);
     }
 }

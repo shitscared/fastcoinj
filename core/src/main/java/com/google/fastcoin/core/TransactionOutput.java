@@ -16,17 +16,20 @@
 
 package com.google.fastcoin.core;
 
+import com.google.fastcoin.script.Script;
+import com.google.fastcoin.script.ScriptBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.annotation.Nullable;
 import java.io.IOException;
 import java.io.ObjectOutputStream;
 import java.io.OutputStream;
 import java.io.Serializable;
+import java.lang.ref.WeakReference;
 import java.math.BigInteger;
 
-import static com.google.common.base.Preconditions.checkNotNull;
-import static com.google.common.base.Preconditions.checkState;
+import static com.google.common.base.Preconditions.*;
 
 /**
  * A TransactionOutput message contains a scriptPubKey that controls who is able to spend its value. It is a sub-part
@@ -42,7 +45,7 @@ public class TransactionOutput extends ChildMessage implements Serializable {
     private byte[] scriptBytes;
 
     // The script bytes are parsed and turned into a Script on demand.
-    private transient Script scriptPubKey;
+    private transient WeakReference<Script> scriptPubKey;
 
     // These fields are Java serialized but not Bitcoin serialized. They are used for tracking purposes in our wallet
     // only. If set to true, this output is counted towards our balance. If false and spentBy is null the tx output
@@ -58,7 +61,7 @@ public class TransactionOutput extends ChildMessage implements Serializable {
     /**
      * Deserializes a transaction output message. This is usually part of a transaction message.
      */
-    public TransactionOutput(NetworkParameters params, Transaction parent, byte[] payload,
+    public TransactionOutput(NetworkParameters params, @Nullable Transaction parent, byte[] payload,
                              int offset) throws ProtocolException {
         super(params, payload, offset);
         parentTransaction = parent;
@@ -90,7 +93,7 @@ public class TransactionOutput extends ChildMessage implements Serializable {
      * {@link Transaction#addOutput(java.math.BigInteger, Address)} instead of creating a TransactionOutput directly.
      */
     public TransactionOutput(NetworkParameters params, Transaction parent, BigInteger value, Address to) {
-        this(params, parent, value, Script.createOutputScript(to));
+        this(params, parent, value, ScriptBuilder.createOutputScript(to).getProgram());
     }
 
     /**
@@ -99,11 +102,15 @@ public class TransactionOutput extends ChildMessage implements Serializable {
      * {@link Transaction#addOutput(java.math.BigInteger, ECKey)} instead of creating an output directly.
      */
     public TransactionOutput(NetworkParameters params, Transaction parent, BigInteger value, ECKey to) {
-        this(params, parent, value, Script.createOutputScript(to));
+        this(params, parent, value, ScriptBuilder.createOutputScript(to).getProgram());
     }
 
     public TransactionOutput(NetworkParameters params, Transaction parent, BigInteger value, byte[] scriptBytes) {
         super(params);
+        // Negative values obviously make no sense, except for -1 which is used as a sentinel value when calculating
+        // SIGHASH_SINGLE signatures, so unfortunately we have to allow that here.
+        checkArgument(value.compareTo(BigInteger.ZERO) >= 0 || value.equals(Utils.NEGATIVE_ONE), "Negative values not allowed");
+        checkArgument(value.compareTo(NetworkParameters.MAX_MONEY) < 0, "Values larger than MAX_MONEY not allowed");
         this.value = value;
         this.scriptBytes = scriptBytes;
         parentTransaction = parent;
@@ -112,14 +119,20 @@ public class TransactionOutput extends ChildMessage implements Serializable {
     }
 
     public Script getScriptPubKey() throws ScriptException {
-        if (scriptPubKey == null) {
+        // Quick hack to try and reduce memory consumption on Androids. SoftReference is the same as WeakReference
+        // on Dalvik (by design), so this arrangement just means that we can avoid the cost of re-parsing the script
+        // bytes if getScriptPubKey is called multiple times in quick succession in between garbage collections.
+        Script script = scriptPubKey == null ? null : scriptPubKey.get();
+        if (script == null) {
             maybeParse();
-            scriptPubKey = new Script(params, scriptBytes, 0, scriptBytes.length);
+            script = new Script(scriptBytes);
+            scriptPubKey = new WeakReference<Script>(script);
+            return script;
         }
-        return scriptPubKey;
+        return script;
     }
 
-    protected void parseLite() {
+    protected void parseLite() throws ProtocolException {
         // TODO: There is no reason to use BigInteger for values, they are always smaller than 21 million * COIN
         // The only reason to use BigInteger would be to properly read values from the reference implementation, however
         // the reference implementation uses signed 64-bit integers for its values as well (though it probably shouldn't)
@@ -136,7 +149,7 @@ public class TransactionOutput extends ChildMessage implements Serializable {
     @Override
     protected void fastcoinSerializeToStream(OutputStream stream) throws IOException {
         checkNotNull(scriptBytes);
-        Utils.uint64ToByteStreamLE(getValue(), stream);
+        Utils.int64ToByteStreamLE(getValue().longValue(), stream);
         // TODO: Move script serialization into the Script class, where it belongs.
         stream.write(new VarInt(scriptBytes.length).encode());
         stream.write(scriptBytes);
@@ -151,6 +164,15 @@ public class TransactionOutput extends ChildMessage implements Serializable {
         return value;
     }
 
+    /**
+     * Sets the value of this output in nanocoins.
+     */
+    public void setValue(BigInteger value) {
+        checkNotNull(value);
+        unCache();
+        this.value = value;
+    }
+
     int getIndex() {
         checkNotNull(parentTransaction);
         for (int i = 0; i < parentTransaction.getOutputs().size(); i++) {
@@ -159,6 +181,39 @@ public class TransactionOutput extends ChildMessage implements Serializable {
         }
         // Should never happen.
         throw new RuntimeException("Output linked to wrong parent transaction?");
+    }
+
+    /**
+     * <p>Gets the minimum value for a txout of this size to be considered non-dust by a reference client
+     * (and thus relayed). See: CTxOut::IsDust() in the reference client. The assumption is that any output that would
+     * consume more than a third of its value in fees is not something the Bitcoin system wants to deal with right now,
+     * so we call them "dust outputs" and they're made non standard. The choice of one third is somewhat arbitrary and
+     * may change in future.</p>
+     *
+     * <p>You probably should use {@link com.google.fastcoin.core.TransactionOutput#getMinNonDustValue()} which uses
+     * a safe fee-per-kb by default.</p>
+     *
+     * @param feePerKbRequired The fee required per kilobyte. Note that this is the same as the reference client's -minrelaytxfee * 3
+     *                         If you want a safe default, use {@link Transaction#REFERENCE_DEFAULT_MIN_TX_FEE}*3
+     */
+    public BigInteger getMinNonDustValue(BigInteger feePerKbRequired) {
+        // A typical output is 33 bytes (pubkey hash + opcodes) and requires an input of 148 bytes to spend so we add
+        // that together to find out the total amount of data used to transfer this amount of value. Note that this
+        // formula is wrong for anything that's not a pay-to-address output, unfortunately, we must follow the reference
+        // clients wrongness in order to ensure we're considered standard. A better formula would either estimate the
+        // size of data needed to satisfy all different script types, or just hard code 33 below.
+        final BigInteger size = BigInteger.valueOf(this.fastcoinSerialize().length + 148);
+        BigInteger[] nonDustAndRemainder = feePerKbRequired.multiply(size).divideAndRemainder(BigInteger.valueOf(1000));
+        return nonDustAndRemainder[1].equals(BigInteger.ZERO) ? nonDustAndRemainder[0] : nonDustAndRemainder[0].add(BigInteger.ONE);
+    }
+
+    /**
+     * Returns the minimum value for this output to be considered "not dust", i.e. the transaction will be relayable
+     * and mined by default miners. For normal pay to address outputs, this is 5460 satoshis, the same as
+     * {@link Transaction#MIN_NONDUST_OUTPUT}.
+     */
+    public BigInteger getMinNonDustValue() {
+        return getMinNonDustValue(Transaction.REFERENCE_DEFAULT_MIN_TX_FEE.multiply(BigInteger.valueOf(3)));
     }
 
     /**
@@ -201,6 +256,27 @@ public class TransactionOutput extends ChildMessage implements Serializable {
     }
 
     /**
+     * Returns true if this output is to a key in the wallet or to an address/script we are watching.
+     */
+    public boolean isMineOrWatched(Wallet wallet) {
+        return isMine(wallet) || isWatched(wallet);
+    }
+
+    /**
+     * Returns true if this output is to a key, or an address we have the keys for, in the wallet.
+     */
+    public boolean isWatched(Wallet wallet) {
+        try {
+            Script script = getScriptPubKey();
+            return wallet.isWatchedScript(script);
+        } catch (ScriptException e) {
+            // Just means we didn't understand the output of this transaction: ignore it.
+            log.debug("Could not parse tx output script: {}", e.toString());
+            return false;
+        }
+    }
+
+    /**
      * Returns true if this output is to a key, or an address we have the keys for, in the wallet.
      */
     public boolean isMine(Wallet wallet) {
@@ -225,8 +301,8 @@ public class TransactionOutput extends ChildMessage implements Serializable {
      */
     public String toString() {
         try {
-            return "TxOut of " + Utils.fastcoinValueToFriendlyString(value) + " to " + getScriptPubKey().getToAddress()
-                    .toString() + " script:" + getScriptPubKey().toString();
+            return "TxOut of " + Utils.fastcoinValueToFriendlyString(value) + " to " +
+                    getScriptPubKey().getToAddress(params).toString() + " script:" + getScriptPubKey().toString();
         } catch (ScriptException e) {
             throw new RuntimeException(e);
         }
@@ -237,6 +313,13 @@ public class TransactionOutput extends ChildMessage implements Serializable {
      */
     public TransactionInput getSpentBy() {
         return spentBy;
+    }
+
+    /**
+     * Returns the transaction that owns this output, or throws NullPointerException if unowned.
+     */
+    public Transaction getParentTransaction() {
+        return checkNotNull(parentTransaction, "Free-standing TransactionOutput");
     }
 
     /**

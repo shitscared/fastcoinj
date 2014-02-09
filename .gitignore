@@ -11,3 +11,7 @@ target
 *.db
 
 *.wallet
+
+*.blockchain2
+
+*.iml

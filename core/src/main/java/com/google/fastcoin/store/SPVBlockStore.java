@@ -17,11 +17,11 @@
 package com.google.fastcoin.store;
 
 import com.google.fastcoin.core.*;
-import com.google.fastcoin.utils.Locks;
-import com.google.common.base.Preconditions;
+import com.google.fastcoin.utils.Threading;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.annotation.Nullable;
 import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
@@ -54,7 +54,7 @@ public class SPVBlockStore implements BlockStore {
     protected int numHeaders;
     protected NetworkParameters params;
 
-    protected ReentrantLock lock = Locks.lock("SPVBlockStore");
+    protected ReentrantLock lock = Threading.lock("SPVBlockStore");
 
     // The entire ring-buffer is mmapped and accessing it should be as fast as accessing regular memory once it's
     // faulted in. Unfortunately, in theory practice and theory are the same. In practice they aren't.
@@ -75,10 +75,10 @@ public class SPVBlockStore implements BlockStore {
     //
     // We don't care about the value in this cache. It is always notFoundMarker. Unfortunately LinkedHashSet does not
     // provide the removeEldestEntry control.
-    protected static final StoredBlock notFoundMarker = new StoredBlock(null, null, -1);
-    protected LinkedHashMap<Sha256Hash, StoredBlock> notFoundCache = new LinkedHashMap<Sha256Hash, StoredBlock>() {
+    protected static final Object notFoundMarker = new Object();
+    protected LinkedHashMap<Sha256Hash, Object> notFoundCache = new LinkedHashMap<Sha256Hash, Object>() {
         @Override
-        protected boolean removeEldestEntry(Map.Entry<Sha256Hash, StoredBlock> entry) {
+        protected boolean removeEldestEntry(Map.Entry<Sha256Hash, Object> entry) {
             return size() > 100;  // This was chosen arbitrarily.
         }
     };
@@ -150,7 +150,7 @@ public class SPVBlockStore implements BlockStore {
         } finally {
             lock.unlock();
         }
-        Block genesis = params.genesisBlock.cloneAsHeader();
+        Block genesis = params.getGenesisBlock().cloneAsHeader();
         StoredBlock storedGenesis = new StoredBlock(genesis, genesis.getWork(), 0);
         put(storedGenesis);
         setChainHead(storedGenesis);
@@ -182,6 +182,7 @@ public class SPVBlockStore implements BlockStore {
         } finally { lock.unlock(); }
     }
 
+    @Nullable
     public StoredBlock get(Sha256Hash hash) throws BlockStoreException {
         final MappedByteBuffer buffer = this.buffer;
         if (buffer == null) throw new BlockStoreException("Store closed");
@@ -238,7 +239,10 @@ public class SPVBlockStore implements BlockStore {
                 buffer.position(8);
                 buffer.get(headHash);
                 Sha256Hash hash = new Sha256Hash(headHash);
-                lastChainHead = checkNotNull(get(hash), "Corrupted block store: could not find chain head: " + hash);
+                StoredBlock block = get(hash);
+                if (block == null)
+                    throw new BlockStoreException("Corrupted block store: could not find chain head: " + hash);
+                lastChainHead = block;
             }
             return lastChainHead;
         } finally { lock.unlock(); }
@@ -284,7 +288,7 @@ public class SPVBlockStore implements BlockStore {
     /** Returns the offset from the file start where the latest block should be written (end of prev block). */
     private int getRingCursor(ByteBuffer buffer) {
         int c = buffer.getInt(4);
-        Preconditions.checkState(c >= FILE_PROLOGUE_BYTES, "Integer overflow");
+        checkState(c >= FILE_PROLOGUE_BYTES, "Integer overflow");
         return c;
     }
 

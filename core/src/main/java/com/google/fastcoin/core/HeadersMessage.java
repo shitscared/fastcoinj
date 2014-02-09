@@ -19,6 +19,8 @@ package com.google.fastcoin.core;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
+import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -43,6 +45,18 @@ public class HeadersMessage extends Message {
     public HeadersMessage(NetworkParameters params, Block... headers) throws ProtocolException {
         super(params);
         blockHeaders = Arrays.asList(headers);
+    }
+
+    @Override
+    public void fastcoinSerializeToStream(OutputStream stream) throws IOException {
+        stream.write(new VarInt(blockHeaders.size()).encode());
+        for (Block header : blockHeaders) {
+            if (header.transactions == null)
+                header.fastcoinSerializeToStream(stream);
+            else
+                header.cloneAsHeader().fastcoinSerializeToStream(stream);
+            stream.write(0);
+        }
     }
 
     @Override

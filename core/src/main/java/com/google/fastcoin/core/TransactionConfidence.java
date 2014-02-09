@@ -16,12 +16,18 @@
 
 package com.google.fastcoin.core;
 
+import com.google.fastcoin.utils.ListenerRegistration;
+import com.google.fastcoin.utils.Threading;
 import com.google.common.base.Preconditions;
+import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.SettableFuture;
 
+import javax.annotation.Nullable;
 import java.io.Serializable;
 import java.math.BigInteger;
 import java.util.ListIterator;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.Executor;
 
 /**
  * <p>A TransactionConfidence object tracks data you can use to make a confidence decision about a transaction.
@@ -61,14 +67,16 @@ public class TransactionConfidence implements Serializable {
      */
     private CopyOnWriteArrayList<PeerAddress> broadcastBy;
     /** The Transaction that this confidence object is associated with. */
-    private Transaction transaction;
+    private final Transaction transaction;
     // Lazily created listeners array.
-    private transient CopyOnWriteArrayList<Listener> listeners;
+    private transient CopyOnWriteArrayList<ListenerRegistration<Listener>> listeners;
 
     // The depth of the transaction on the best chain in blocks. An unconfirmed block has depth 0.
     private int depth;
     // The cumulative work done for the blocks that bury this transaction.
     private BigInteger workDone = BigInteger.ZERO;
+
+    private int broadcastByCount;
 
     /** Describes the state of the transaction in general terms. Properties can be read to learn specifics. */
     public enum ConfidenceType {
@@ -76,21 +84,14 @@ public class TransactionConfidence implements Serializable {
         BUILDING(1),
 
         /**
-         * If NOT_SEEN_IN_CHAIN, then the transaction is pending and should be included shortly, as long as it is being
+         * If PENDING, then the transaction is unconfirmed and should be included shortly, as long as it is being
          * announced and is considered valid by the network. A pending transaction will be announced if the containing
          * wallet has been attached to a live {@link PeerGroup} using {@link PeerGroup#addWallet(Wallet)}.
          * You can estimate how likely the transaction is to be included by connecting to a bunch of nodes then measuring
          * how many announce it, using {@link com.google.fastcoin.core.TransactionConfidence#numBroadcastPeers()}.
          * Or if you saw it from a trusted peer, you can assume it's valid and will get mined sooner or later as well.
          */
-        NOT_SEEN_IN_CHAIN(2),
-
-        /**
-         * If NOT_IN_BEST_CHAIN, then the transaction has been included in a block, but that block is on a fork. A
-         * transaction can change from BUILDING to NOT_IN_BEST_CHAIN and vice versa if a reorganization takes place,
-         * due to a split in the consensus.
-         */
-        NOT_IN_BEST_CHAIN(3),
+        PENDING(2),
 
         /**
          * If DEAD, then it means the transaction won't confirm unless there is another re-org,
@@ -113,18 +114,6 @@ public class TransactionConfidence implements Serializable {
         public int getValue() {
             return value;
         }
-
-        public static ConfidenceType valueOf(int value) {
-            switch (value) {
-            case 0: return UNKNOWN;
-            case 1: return BUILDING;
-            case 2: return NOT_SEEN_IN_CHAIN;
-            case 3: return NOT_IN_BEST_CHAIN;
-            case 4: return DEAD;
-            default: return null;
-            }
-        }
-
     }
 
     private ConfidenceType confidenceType = ConfidenceType.UNKNOWN;
@@ -150,7 +139,8 @@ public class TransactionConfidence implements Serializable {
     public TransactionConfidence(Transaction tx) {
         // Assume a default number of peers for our set.
         broadcastBy = new CopyOnWriteArrayList<PeerAddress>();
-        listeners = new CopyOnWriteArrayList<Listener>();
+        listeners = new CopyOnWriteArrayList<ListenerRegistration<Listener>>();
+        broadcastByCount = 0;
         transaction = tx;
     }
 
@@ -164,7 +154,44 @@ public class TransactionConfidence implements Serializable {
      * <p>During listener execution, it's safe to remove the current listener but not others.</p>
      */
     public interface Listener {
-        public void onConfidenceChanged(Transaction tx);
+        /** An enum that describes why a transaction confidence listener is being invoked (i.e. the class of change). */
+        public enum ChangeReason {
+            /**
+             * Occurs when the type returned by {@link com.google.fastcoin.core.TransactionConfidence#getConfidenceType()}
+             * has changed. For example, if a PENDING transaction changes to BUILDING or DEAD, then this reason will
+             * be given. It's a high level summary.
+             */
+            TYPE,
+
+            /**
+             * Occurs when a transaction that is in the best known block chain gets buried by another block. If you're
+             * waiting for a certain number of confirmations, this is the reason to watch out for.
+             */
+            DEPTH,
+
+            /**
+             * Occurs when a pending transaction (not in the chain) was announced by another connected peers. By
+             * watching the number of peers that announced a transaction go up, you can see whether it's being
+             * accepted by the network or not. If all your peers announce, it's a pretty good bet the transaction
+             * is considered relayable and has thus reached the miners.
+             */
+            SEEN_PEERS,
+        }
+        public void onConfidenceChanged(Transaction tx, ChangeReason reason);
+    }
+
+    /**
+     * <p>Adds an event listener that will be run when this confidence object is updated. The listener will be locked and
+     * is likely to be invoked on a peer thread.</p>
+     *
+     * <p>Note that this is NOT called when every block arrives. Instead it is called when the transaction
+     * transitions between confidence states, ie, from not being seen in the chain to being seen (not necessarily in
+     * the best chain). If you want to know when the transaction gets buried under another block, consider using
+     * a future from {@link #getDepthFuture(int)}.</p>
+     */
+    public void addEventListener(Listener listener, Executor executor) {
+        Preconditions.checkNotNull(listener);
+        listeners.addIfAbsent(new ListenerRegistration<Listener>(listener, executor));
     }
 
     /**
@@ -178,13 +205,12 @@ public class TransactionConfidence implements Serializable {
      * confidence object to determine the new depth.</p>
      */
     public void addEventListener(Listener listener) {
-        Preconditions.checkNotNull(listener);
-        listeners.addIfAbsent(listener);
+        addEventListener(listener, Threading.USER_THREAD);
     }
 
-    public void removeEventListener(Listener listener) {
+    public boolean removeEventListener(Listener listener) {
         Preconditions.checkNotNull(listener);
-        listeners.remove(listener);
+        return ListenerRegistration.removeFromList(listener, listeners);
     }
 
     /**
@@ -199,12 +225,13 @@ public class TransactionConfidence implements Serializable {
 
     /**
      * The chain height at which the transaction appeared, if it has been seen in the best chain. Automatically sets
-     * the current type to {@link ConfidenceType#BUILDING}.
+     * the current type to {@link ConfidenceType#BUILDING} and depth to one.
      */
     public synchronized void setAppearedAtChainHeight(int appearedAtChainHeight) {
         if (appearedAtChainHeight < 0)
             throw new IllegalArgumentException("appearedAtChainHeight out of range");
         this.appearedAtChainHeight = appearedAtChainHeight;
+        this.depth = 1;
         setConfidenceType(ConfidenceType.BUILDING);
     }
 
@@ -219,34 +246,35 @@ public class TransactionConfidence implements Serializable {
      * Called by other objects in the system, like a {@link Wallet}, when new information about the confidence of a 
      * transaction becomes available.
      */
-    public void setConfidenceType(ConfidenceType confidenceType) {
+    public synchronized void setConfidenceType(ConfidenceType confidenceType) {
         // Don't inform the event listeners if the confidence didn't really change.
-        synchronized (this) {
-            if (confidenceType == this.confidenceType)
-                return;
-            this.confidenceType = confidenceType;
+        if (confidenceType == this.confidenceType)
+            return;
+        this.confidenceType = confidenceType;
+        if (confidenceType == ConfidenceType.PENDING) {
+            depth = 0;
+            appearedAtChainHeight = -1;
+            workDone = BigInteger.ZERO;
         }
-        runListeners();
     }
 
 
     /**
      * Called by a {@link Peer} when a transaction is pending and announced by a peer. The more peers announce the
      * transaction, the more peers have validated it (assuming your internet connection is not being intercepted).
-     * If confidence is currently unknown, sets it to {@link ConfidenceType#NOT_SEEN_IN_CHAIN}. Listeners will be
+     * If confidence is currently unknown, sets it to {@link ConfidenceType#PENDING}. Listeners will be
      * invoked in this case.
      *
      * @param address IP address of the peer, used as a proxy for identity.
      */
-    public void markBroadcastBy(PeerAddress address) {
+    public synchronized boolean markBroadcastBy(PeerAddress address) {
         if (!broadcastBy.addIfAbsent(address))
-            return;  // Duplicate.
-        synchronized (this) {
-            if (getConfidenceType() == ConfidenceType.UNKNOWN) {
-                this.confidenceType = ConfidenceType.NOT_SEEN_IN_CHAIN;
-            }
+            return false;  // Duplicate.
+        broadcastByCount++;
+        if (getConfidenceType() == ConfidenceType.UNKNOWN) {
+            this.confidenceType = ConfidenceType.PENDING;
         }
-        runListeners();
+        return true;
     }
 
     /**
@@ -287,11 +315,8 @@ public class TransactionConfidence implements Serializable {
             case DEAD:
                 builder.append("Dead: overridden by double spend and will not confirm.");
                 break;
-            case NOT_IN_BEST_CHAIN: 
-                builder.append("Seen in side chain but not best chain.");
-                break;
-            case NOT_SEEN_IN_CHAIN:
-                builder.append("Not seen in chain.");
+            case PENDING:
+                builder.append("Pending/unconfirmed.");
                 break;
             case BUILDING:
                 builder.append(String.format("Appeared in best chain at height %d, depth %d, work done %s.",
@@ -306,37 +331,26 @@ public class TransactionConfidence implements Serializable {
      * Updates the internal counter that tracks how deeply buried the block is.
      * Work is the value of block.getWork().
      */
-    public void notifyWorkDone(Block block) throws VerificationException {
-        boolean notify = false;
-        synchronized (this) {
-            if (getConfidenceType() == ConfidenceType.BUILDING) {
-                this.depth++;
-                this.workDone = this.workDone.add(block.getWork());
-                notify = true;
-            }
-        }
-        if (notify)
-            runListeners();
+    public synchronized boolean notifyWorkDone(Block block) throws VerificationException {
+        if (getConfidenceType() != ConfidenceType.BUILDING)
+            return false;   // Should this be an assert?
+
+        this.depth++;
+        this.workDone = this.workDone.add(block.getWork());
+        return true;
     }
 
     /**
-     * Depth in the chain is an approximation of how much time has elapsed since the transaction has been confirmed. On
-     * average there is supposed to be a new block every 10 minutes, but the actual rate may vary. The reference
+     * <p>Depth in the chain is an approximation of how much time has elapsed since the transaction has been confirmed.
+     * On average there is supposed to be a new block every 10 minutes, but the actual rate may vary. The reference
      * (Satoshi) implementation considers a transaction impractical to reverse after 6 blocks, but as of EOY 2011 network
      * security is high enough that often only one block is considered enough even for high value transactions. For low
-     * value transactions like songs, or other cheap items, no blocks at all may be necessary.<p>
+     * value transactions like songs, or other cheap items, no blocks at all may be necessary.</p>
      *     
-     * If the transaction appears in the top block, the depth is one. If the transaction does not appear in the best
-     * chain yet, throws IllegalStateException, so use {@link com.google.fastcoin.core.TransactionConfidence#getConfidenceType()}
-     * to check first.
-     *
-     * @throws IllegalStateException if confidence type != BUILDING.
-     * @return depth
+     * <p>If the transaction appears in the top block, the depth is one. If it's anything else (pending, dead, unknown)
+     * the depth is zero.</p>
      */
     public synchronized int getDepthInBlocks() {
-        if (getConfidenceType() != ConfidenceType.BUILDING) {
-            throw new IllegalStateException("Confidence type is not BUILDING");
-        }
         return depth;
     }
 
@@ -351,15 +365,10 @@ public class TransactionConfidence implements Serializable {
      * Returns the estimated amount of work (number of hashes performed) on this transaction. Work done is a measure of
      * security that is related to depth in blocks, but more predictable: the network will always attempt to produce six
      * blocks per hour by adjusting the difficulty target. So to know how much real computation effort is needed to
-     * reverse a transaction, counting blocks is not enough.
-     *
-     * @throws IllegalStateException if confidence type is not BUILDING
+     * reverse a transaction, counting blocks is not enough. If a transaction has not confirmed, the result is zero.
      * @return estimated number of hashes needed to reverse the transaction.
      */
     public synchronized BigInteger getWorkDone() {
-        if (getConfidenceType() != ConfidenceType.BUILDING) {
-            throw new IllegalStateException("Confidence type is not BUILDING");
-        }
         return workDone;
     }
 
@@ -387,7 +396,7 @@ public class TransactionConfidence implements Serializable {
      * in such a way that the double-spending transaction takes precedence over this one. It will not become valid now
      * unless there is a re-org. Automatically sets the confidence type to DEAD.
      */
-    public synchronized void setOverridingTransaction(Transaction overridingTransaction) {
+    public synchronized void setOverridingTransaction(@Nullable Transaction overridingTransaction) {
         this.overridingTransaction = overridingTransaction;
         setConfidenceType(ConfidenceType.DEAD);
     }
@@ -398,6 +407,7 @@ public class TransactionConfidence implements Serializable {
         // There is no point in this sync block, it's just to help FindBugs.
         synchronized (c) {
             c.broadcastBy.addAll(broadcastBy);
+            c.broadcastByCount = broadcastByCount;
             c.confidenceType = confidenceType;
             c.overridingTransaction = overridingTransaction;
             c.appearedAtChainHeight = appearedAtChainHeight;
@@ -405,15 +415,27 @@ public class TransactionConfidence implements Serializable {
         }
     }
 
-    private void runListeners() {
-        for (Listener listener : listeners)
-            listener.onConfidenceChanged(transaction);
+    /**
+     * Call this after adjusting the confidence, for cases where listeners should be notified. This has to be done
+     * explicitly rather than being done automatically because sometimes complex changes to transaction states can
+     * result in a series of confidence changes that are not really useful to see separately. By invoking listeners
+     * explicitly, more precise control is available. Note that this will run the listeners on the user code thread.
+     */
+    public void queueListeners(final Listener.ChangeReason reason) {
+        for (final ListenerRegistration<Listener> registration : listeners) {
+            registration.executor.execute(new Runnable() {
+                @Override
+                public void run() {
+                    registration.listener.onConfidenceChanged(transaction, reason);
+                }
+            });
+        }
     }
 
     /**
      * The source of a transaction tries to identify where it came from originally. For instance, did we download it
      * from the peer to peer network, or make it ourselves, or receive it via Bluetooth, or import it from another app,
-     * and so on. This information is useful for {@link Wallet.CoinSelector} implementations to risk analyze
+     * and so on. This information is useful for {@link com.google.fastcoin.wallet.CoinSelector} implementations to risk analyze
      * transactions and decide when to spend them.
      */
     public synchronized Source getSource() {
@@ -423,10 +445,39 @@ public class TransactionConfidence implements Serializable {
     /**
      * The source of a transaction tries to identify where it came from originally. For instance, did we download it
      * from the peer to peer network, or make it ourselves, or receive it via Bluetooth, or import it from another app,
-     * and so on. This information is useful for {@link Wallet.CoinSelector} implementations to risk analyze
+     * and so on. This information is useful for {@link com.google.fastcoin.wallet.CoinSelector} implementations to risk analyze
      * transactions and decide when to spend them.
      */
     public synchronized void setSource(Source source) {
         this.source = source;
+    }
+
+    /**
+     * Returns a future that completes when the transaction has been confirmed by "depth" blocks. For instance setting
+     * depth to one will wait until it appears in a block on the best chain, and zero will wait until it has been seen
+     * on the network.
+     */
+    public synchronized ListenableFuture<Transaction> getDepthFuture(final int depth, Executor executor) {
+        final SettableFuture<Transaction> result = SettableFuture.create();
+        if (getDepthInBlocks() >= depth) {
+            result.set(transaction);
+        }
+        addEventListener(new Listener() {
+            @Override public void onConfidenceChanged(Transaction tx, ChangeReason reason) {
+                if (getDepthInBlocks() >= depth) {
+                    removeEventListener(this);
+                    result.set(transaction);
+                }
+            }
+        }, executor);
+        return result;
+    }
+
+    public synchronized ListenableFuture<Transaction> getDepthFuture(final int depth) {
+        return getDepthFuture(depth, Threading.USER_THREAD);
+    }
+
+    public int getBroadcastByCount() {
+        return broadcastByCount;
     }
 }

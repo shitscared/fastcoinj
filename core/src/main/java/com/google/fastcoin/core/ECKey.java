@@ -16,29 +16,29 @@
 
 package com.google.fastcoin.core;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import com.google.common.base.Preconditions;
-import org.spongycastle.asn1.*;
-import org.spongycastle.asn1.sec.SECNamedCurves;
-import org.spongycastle.asn1.x9.X9ECParameters;
-import org.spongycastle.crypto.AsymmetricCipherKeyPair;
-import org.spongycastle.crypto.generators.ECKeyPairGenerator;
-import org.spongycastle.crypto.params.ECDomainParameters;
-import org.spongycastle.crypto.params.ECKeyGenerationParameters;
-import org.spongycastle.crypto.params.ECPrivateKeyParameters;
-import org.spongycastle.crypto.params.ECPublicKeyParameters;
-import org.spongycastle.crypto.params.KeyParameter;
-import org.spongycastle.crypto.signers.ECDSASigner;
-import org.spongycastle.math.ec.ECCurve;
-import org.spongycastle.math.ec.ECFieldElement;
-import org.spongycastle.math.ec.ECPoint;
-import org.spongycastle.util.encoders.Base64;
-
 import com.google.fastcoin.crypto.EncryptedPrivateKey;
 import com.google.fastcoin.crypto.KeyCrypter;
 import com.google.fastcoin.crypto.KeyCrypterException;
+import com.google.fastcoin.crypto.TransactionSignature;
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Preconditions;
+import org.fastcoin.NativeSecp256k1;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.spongycastle.asn1.*;
+import org.spongycastle.asn1.sec.SECNamedCurves;
+import org.spongycastle.asn1.x9.X9ECParameters;
+import org.spongycastle.asn1.x9.X9IntegerConverter;
+import org.spongycastle.crypto.AsymmetricCipherKeyPair;
+import org.spongycastle.crypto.generators.ECKeyPairGenerator;
+import org.spongycastle.crypto.params.*;
+import org.spongycastle.crypto.signers.ECDSASigner;
+import org.spongycastle.math.ec.ECAlgorithms;
+import org.spongycastle.math.ec.ECCurve;
+import org.spongycastle.math.ec.ECPoint;
+import org.spongycastle.util.encoders.Base64;
 
+import javax.annotation.Nullable;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.Serializable;
@@ -49,6 +49,7 @@ import java.security.SignatureException;
 import java.util.Arrays;
 
 import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkState;
 
 // TODO: This class is quite a mess by now. Once users are migrated away from Java serialization for the wallets,
 // refactor this to have better internal layout and a more consistent API.
@@ -70,7 +71,14 @@ import static com.google.common.base.Preconditions.checkArgument;
 public class ECKey implements Serializable {
     private static final Logger log = LoggerFactory.getLogger(ECKey.class);
 
-    private static final ECDomainParameters ecParams;
+    /** The parameters of the secp256k1 curve that Bitcoin uses. */
+    public static final ECDomainParameters CURVE;
+
+    /**
+     * Equal to CURVE.getN().shiftRight(1), used for canonicalising the S value of a signature. If you aren't
+     * sure what this is about, you can ignore it.
+     */
+    public static final BigInteger HALF_CURVE_ORDER;
 
     private static final SecureRandom secureRandom;
     private static final long serialVersionUID = -728224901792295832L;
@@ -78,7 +86,8 @@ public class ECKey implements Serializable {
     static {
         // All clients must agree on the curve to use by agreement. Bitcoin uses secp256k1.
         X9ECParameters params = SECNamedCurves.getByName("secp256k1");
-        ecParams = new ECDomainParameters(params.getCurve(), params.getG(), params.getN(), params.getH());
+        CURVE = new ECDomainParameters(params.getCurve(), params.getG(), params.getN(), params.getH());
+        HALF_CURVE_ORDER = params.getN().shiftRight(1);
         secureRandom = new SecureRandom();
     }
 
@@ -110,7 +119,7 @@ public class ECKey implements Serializable {
      */
     public ECKey() {
         ECKeyPairGenerator generator = new ECKeyPairGenerator();
-        ECKeyGenerationParameters keygenParams = new ECKeyGenerationParameters(ecParams, secureRandom);
+        ECKeyGenerationParameters keygenParams = new ECKeyGenerationParameters(CURVE, secureRandom);
         generator.init(keygenParams);
         AsymmetricCipherKeyPair keypair = generator.generateKeyPair();
         ECPrivateKeyParameters privParams = (ECPrivateKeyParameters) keypair.getPrivate();
@@ -122,11 +131,11 @@ public class ECKey implements Serializable {
         ECPoint compressed = compressPoint(uncompressed);
         pub = compressed.getEncoded();
 
-        creationTimeSeconds = Utils.now().getTime() / 1000;
+        creationTimeSeconds = Utils.currentTimeMillis() / 1000;
     }
 
     private static ECPoint compressPoint(ECPoint uncompressed) {
-        return new ECPoint.Fp(ecParams.getCurve(), uncompressed.getX(), uncompressed.getY(), true);
+        return new ECPoint.Fp(CURVE.getCurve(), uncompressed.getX(), uncompressed.getY(), true);
     }
 
     /**
@@ -152,7 +161,7 @@ public class ECKey implements Serializable {
      * is more convenient if you are importing a key from elsewhere. The public key will be automatically derived
      * from the private key.
      */
-    public ECKey(byte[] privKeyBytes, byte[] pubKey) {
+    public ECKey(@Nullable byte[] privKeyBytes, @Nullable byte[] pubKey) {
         this(privKeyBytes == null ? null : new BigInteger(1, privKeyBytes), pubKey);
     }
 
@@ -163,7 +172,7 @@ public class ECKey implements Serializable {
      * @param pubKey The keys public key
      * @param keyCrypter The KeyCrypter that will be used, with an AES key, to encrypt and decrypt the private key
      */
-    public ECKey(EncryptedPrivateKey encryptedPrivateKey, byte[] pubKey, KeyCrypter keyCrypter) {
+    public ECKey(@Nullable EncryptedPrivateKey encryptedPrivateKey, @Nullable byte[] pubKey, KeyCrypter keyCrypter) {
         this((byte[])null, pubKey);
 
         this.keyCrypter = Preconditions.checkNotNull(keyCrypter);
@@ -177,13 +186,15 @@ public class ECKey implements Serializable {
      * be used for signing.
      * @param compressed If set to true and pubKey is null, the derived public key will be in compressed form.
      */
-    public ECKey(BigInteger privKey, byte[] pubKey, boolean compressed) {
+    public ECKey(@Nullable BigInteger privKey, @Nullable byte[] pubKey, boolean compressed) {
+        if (privKey == null && pubKey == null)
+            throw new IllegalArgumentException("ECKey requires at least private or public key");
         this.priv = privKey;
         this.pub = null;
-        if (pubKey == null && privKey != null) {
+        if (pubKey == null) {
             // Derive public from private.
             this.pub = publicKeyFromPrivate(privKey, compressed);
-        } else if (pubKey != null) {
+        } else {
             // We expect the pubkey to be in regular encoded form, just as a BigInteger. Therefore the first byte is
             // a special marker byte.
             // TODO: This is probably not a useful API and may be confusing.
@@ -197,8 +208,16 @@ public class ECKey implements Serializable {
      * the public key already correctly matches the public key. If only the public key is supplied, this ECKey cannot
      * be used for signing.
      */
-    private ECKey(BigInteger privKey, byte[] pubKey) {
+    private ECKey(@Nullable BigInteger privKey, @Nullable byte[] pubKey) {
         this(privKey, pubKey, false);
+    }
+
+    public boolean isPubKeyOnly() {
+        return priv == null;
+    }
+
+    public boolean hasPrivKey() {
+        return priv != null;
     }
 
     /**
@@ -232,7 +251,7 @@ public class ECKey implements Serializable {
      * new BigInteger(1, bytes);</tt>
      */
     public static byte[] publicKeyFromPrivate(BigInteger privKey, boolean compressed) {
-        ECPoint point = ecParams.getG().multiply(privKey);
+        ECPoint point = CURVE.getG().multiply(privKey);
         if (compressed)
             point = compressPoint(point);
         return point.getEncoded();
@@ -313,30 +332,76 @@ public class ECKey implements Serializable {
      * components can be useful for doing further EC maths on them.
      */
     public static class ECDSASignature {
+        /** The two components of the signature. */
         public BigInteger r, s;
 
+        /**
+         * Constructs a signature with the given components. Does NOT automatically canonicalise the signature.
+         */
         public ECDSASignature(BigInteger r, BigInteger s) {
             this.r = r;
             this.s = s;
         }
 
         /**
-         * What we get back from the signer are the two components of a signature, r and s. To get a flat byte stream
-         * of the type used by Bitcoin we have to encode them using DER encoding, which is just a way to pack the two
-         * components into a structure.
+         * Will automatically adjust the S component to be less than or equal to half the curve order, if necessary.
+         * This is required because for every signature (r,s) the signature (r, -s (mod N)) is a valid signature of
+         * the same message. However, we dislike the ability to modify the bits of a Bitcoin transaction after it's
+         * been signed, as that violates various assumed invariants. Thus in future only one of those forms will be
+         * considered legal and the other will be banned.
+         */
+        public void ensureCanonical() {
+            if (s.compareTo(HALF_CURVE_ORDER) > 0) {
+                // The order of the curve is the number of valid points that exist on that curve. If S is in the upper
+                // half of the number of valid points, then bring it back to the lower half. Otherwise, imagine that
+                //    N = 10
+                //    s = 8, so (-8 % 10 == 2) thus both (r, 8) and (r, 2) are valid solutions.
+                //    10 - 8 == 2, giving us always the latter solution, which is canonical.
+                s = CURVE.getN().subtract(s);
+            }
+        }
+
+        /**
+         * DER is an international standard for serializing data structures which is widely used in cryptography.
+         * It's somewhat like protocol buffers but less convenient. This method returns a standard DER encoding
+         * of the signature, as recognized by OpenSSL and other libraries.
          */
         public byte[] encodeToDER() {
             try {
-                // Usually 70-72 bytes.
-                ByteArrayOutputStream bos = new UnsafeByteArrayOutputStream(72);
-                DERSequenceGenerator seq = new DERSequenceGenerator(bos);
-                seq.addObject(new DERInteger(r));
-                seq.addObject(new DERInteger(s));
-                seq.close();
-                return bos.toByteArray();
+                return derByteStream().toByteArray();
             } catch (IOException e) {
                 throw new RuntimeException(e);  // Cannot happen.
             }
+        }
+
+        public static ECDSASignature decodeFromDER(byte[] bytes) {
+            try {
+                ASN1InputStream decoder = new ASN1InputStream(bytes);
+                DLSequence seq = (DLSequence) decoder.readObject();
+                DERInteger r, s;
+                try {
+                    r = (DERInteger) seq.getObjectAt(0);
+                    s = (DERInteger) seq.getObjectAt(1);
+                } catch (ClassCastException e) {
+                    throw new IllegalArgumentException(e);
+                }
+                decoder.close();
+                // OpenSSL deviates from the DER spec by interpreting these values as unsigned, though they should not be
+                // Thus, we always use the positive versions. See: http://r6.ca/blog/20111119T211504Z.html
+                return new ECDSASignature(r.getPositiveValue(), s.getPositiveValue());
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        protected ByteArrayOutputStream derByteStream() throws IOException {
+            // Usually 70-72 bytes.
+            ByteArrayOutputStream bos = new ByteArrayOutputStream(72);
+            DERSequenceGenerator seq = new DERSequenceGenerator(bos);
+            seq.addObject(new DERInteger(r));
+            seq.addObject(new DERInteger(s));
+            seq.close();
+            return bos;
         }
     }
 
@@ -352,6 +417,14 @@ public class ECKey implements Serializable {
     }
 
     /**
+     * If this global variable is set to true, sign() creates a dummy signature and verify() always returns true.
+     * This is intended to help accelerate unit tests that do a lot of signing/verifying, which in the debugger
+     * can be painfully slow.
+     */
+    @VisibleForTesting
+    public static boolean FAKE_SIGNATURES = false;
+
+    /**
      * Signs the given hash and returns the R and S components as BigIntegers. In the Bitcoin protocol, they are
      * usually encoded using DER format, so you want {@link com.google.fastcoin.core.ECKey.ECDSASignature#encodeToDER()}
      * instead. However sometimes the independent components can be useful, for instance, if you're doing to do further
@@ -360,7 +433,10 @@ public class ECKey implements Serializable {
      * @param aesKey The AES key to use for decryption of the private key. If null then no decryption is required.
      * @throws KeyCrypterException if this ECKey doesn't have a private part.
      */
-    public ECDSASignature sign(Sha256Hash input, KeyParameter aesKey) throws KeyCrypterException {
+    public ECDSASignature sign(Sha256Hash input, @Nullable KeyParameter aesKey) throws KeyCrypterException {
+        if (FAKE_SIGNATURES)
+            return TransactionSignature.dummy();
+
         // The private key bytes to use for signing.
         BigInteger privateKeyForSigning;
 
@@ -375,6 +451,9 @@ public class ECKey implements Serializable {
             }
 
             privateKeyForSigning = new BigInteger(1, keyCrypter.decrypt(encryptedPrivateKey, aesKey));
+            // Check encryption was correct.
+            if (!Arrays.equals(pub, publicKeyFromPrivate(privateKeyForSigning, isCompressed())))
+                throw new KeyCrypterException("Could not decrypt bytes");
         } else {
             // No decryption of private key required.
             if (priv == null) {
@@ -385,10 +464,43 @@ public class ECKey implements Serializable {
         }
 
         ECDSASigner signer = new ECDSASigner();
-        ECPrivateKeyParameters privKey = new ECPrivateKeyParameters(privateKeyForSigning, ecParams);
+        ECPrivateKeyParameters privKey = new ECPrivateKeyParameters(privateKeyForSigning, CURVE);
         signer.init(true, privKey);
-        BigInteger[] sigs = signer.generateSignature(input.getBytes());
-        return new ECDSASignature(sigs[0], sigs[1]);
+        BigInteger[] components = signer.generateSignature(input.getBytes());
+        final ECDSASignature signature = new ECDSASignature(components[0], components[1]);
+        signature.ensureCanonical();
+        return signature;
+    }
+
+    /**
+     * <p>Verifies the given ECDSA signature against the message bytes using the public key bytes.</p>
+     * 
+     * <p>When using native ECDSA verification, data must be 32 bytes, and no element may be
+     * larger than 520 bytes.</p>
+     *
+     * @param data      Hash of the data to verify.
+     * @param signature ASN.1 encoded signature.
+     * @param pub       The public key bytes to use.
+     */
+    public static boolean verify(byte[] data, ECDSASignature signature, byte[] pub) {
+        if (FAKE_SIGNATURES)
+            return true;
+
+        if (NativeSecp256k1.enabled)
+            return NativeSecp256k1.verify(data, signature.encodeToDER(), pub);
+
+        ECDSASigner signer = new ECDSASigner();
+        ECPublicKeyParameters params = new ECPublicKeyParameters(CURVE.getCurve().decodePoint(pub), CURVE);
+        signer.init(false, params);
+        try {
+            return signer.verifySignature(data, signature.r, signature.s);
+        } catch (NullPointerException e) {
+            // Bouncy Castle contains a bug that can cause NPEs given specially crafted signatures. Those signatures
+            // are inherently invalid/attack sigs so we just fail them here rather than crash the thread.
+            log.error("Caught NPE inside bouncy castle");
+            e.printStackTrace();
+            return false;
+        }
     }
 
     /**
@@ -399,30 +511,9 @@ public class ECKey implements Serializable {
      * @param pub       The public key bytes to use.
      */
     public static boolean verify(byte[] data, byte[] signature, byte[] pub) {
-        ECDSASigner signer = new ECDSASigner();
-        ECPublicKeyParameters params = new ECPublicKeyParameters(ecParams.getCurve().decodePoint(pub), ecParams);
-        signer.init(false, params);
-        try {
-            ASN1InputStream decoder = new ASN1InputStream(signature);
-            DLSequence seq = (DLSequence) decoder.readObject();
-            DERInteger r = (DERInteger) seq.getObjectAt(0);
-            DERInteger s = (DERInteger) seq.getObjectAt(1);
-            decoder.close();
-            // OpenSSL deviates from the DER spec by interpreting these values as unsigned, though they should not be
-            // Thus, we always use the positive versions.
-            // See: http://r6.ca/blog/20111119T211504Z.html
-            try {
-                return signer.verifySignature(data, r.getPositiveValue(), s.getPositiveValue());
-            } catch (NullPointerException e) {
-                // Bouncy Castle contains a bug that can cause NPEs given specially crafted signatures. Those signatures
-                // are inherently invalid/attack sigs so we just fail them here rather than crash the thread.
-                log.error("Caught NPE inside bouncy castle");
-                e.printStackTrace();
-                return false;
-            }
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
+        if (NativeSecp256k1.enabled)
+            return NativeSecp256k1.verify(data, signature, pub);
+        return verify(data, ECDSASignature.decodeFromDER(signature), pub);
     }
 
     /**
@@ -432,7 +523,40 @@ public class ECKey implements Serializable {
      * @param signature ASN.1 encoded signature.
      */
     public boolean verify(byte[] data, byte[] signature) {
-        return ECKey.verify(data, signature, pub);
+        return ECKey.verify(data, signature, getPubKey());
+    }
+
+    /**
+     * Verifies the given R/S pair (signature) against a hash using the public key.
+     */
+    public boolean verify(Sha256Hash sigHash, ECDSASignature signature) {
+        return ECKey.verify(sigHash.getBytes(), signature, getPubKey());
+    }
+
+    /**
+     * Returns true if this pubkey is canonical, i.e. the correct length taking into account compression.
+     */
+    public boolean isPubKeyCanonical() {
+        return isPubKeyCanonical(pub);
+    }
+
+    /**
+     * Returns true if the given pubkey is canonical, i.e. the correct length taking into account compression.
+     */
+    public static boolean isPubKeyCanonical(byte[] pubkey) {
+        if (pubkey.length < 33)
+            return false;
+        if (pubkey[0] == 0x04) {
+            // Uncompressed pubkey
+            if (pubkey.length != 65)
+                return false;
+        } else if (pubkey[0] == 0x02 || pubkey[0] == 0x03) {
+            // Compressed pubkey
+            if (pubkey.length != 33)
+                return false;
+        } else
+            return false;
+        return true;
     }
 
     private static BigInteger extractPrivateKeyFromASN1(byte[] asn1privkey) {
@@ -479,7 +603,7 @@ public class ECKey implements Serializable {
      * @throws IllegalStateException if this ECKey does not have the private part.
      * @throws KeyCrypterException if this ECKey is encrypted and no AESKey is provided or it does not decrypt the ECKey.
      */
-    public String signMessage(String message, KeyParameter aesKey) throws KeyCrypterException {
+    public String signMessage(String message, @Nullable KeyParameter aesKey) throws KeyCrypterException {
         if (priv == null)
             throw new IllegalStateException("This ECKey does not have the private key necessary for signing.");
         byte[] data = Utils.formatMessageForSigning(message);
@@ -580,6 +704,7 @@ public class ECKey implements Serializable {
      * @param compressed Whether or not the original pubkey was compressed.
      * @return An ECKey containing only the public part, or null if recovery wasn't possible.
      */
+    @Nullable
     public static ECKey recoverFromSignature(int recId, ECDSASignature sig, Sha256Hash message, boolean compressed) {
         Preconditions.checkArgument(recId >= 0, "recId must be positive");
         Preconditions.checkArgument(sig.r.compareTo(BigInteger.ZERO) >= 0, "r must be positive");
@@ -587,7 +712,7 @@ public class ECKey implements Serializable {
         Preconditions.checkNotNull(message);
         // 1.0 For j from 0 to h   (h == recId here and the loop is outside this function)
         //   1.1 Let x = r + jn
-        BigInteger n = ecParams.getN();  // Curve order.
+        BigInteger n = CURVE.getN();  // Curve order.
         BigInteger i = BigInteger.valueOf((long) recId / 2);
         BigInteger x = sig.r.add(i.multiply(n));
         //   1.2. Convert the integer x to an octet string X of length mlen using the conversion routine
@@ -597,7 +722,7 @@ public class ECKey implements Serializable {
         //        do another iteration of Step 1.
         //
         // More concisely, what these points mean is to use X as a compressed public key.
-        ECCurve.Fp curve = (ECCurve.Fp) ecParams.getCurve();
+        ECCurve.Fp curve = (ECCurve.Fp) CURVE.getCurve();
         BigInteger prime = curve.getQ();  // Bouncy Castle is not consistent about the letter it uses for the prime.
         if (x.compareTo(prime) >= 0) {
             // Cannot have point co-ordinates larger than this as everything takes place modulo Q.
@@ -626,9 +751,7 @@ public class ECKey implements Serializable {
         BigInteger rInv = sig.r.modInverse(n);
         BigInteger srInv = rInv.multiply(sig.s).mod(n);
         BigInteger eInvrInv = rInv.multiply(eInv).mod(n);
-        ECPoint p1 = ecParams.getG().multiply(eInvrInv);
-        ECPoint p2 = R.multiply(srInv);
-        ECPoint.Fp q = (ECPoint.Fp) p2.add(p1);
+        ECPoint.Fp q = (ECPoint.Fp) ECAlgorithms.sumOfTwoMultiplies(CURVE.getG(), eInvrInv, R, srInv);
         if (compressed) {
             // We have to manually recompress the point as the compressed-ness gets lost when multiply() is used.
             q = new ECPoint.Fp(curve, q.getX(), q.getY(), true);
@@ -638,38 +761,32 @@ public class ECKey implements Serializable {
 
     /** Decompress a compressed public key (x co-ord and low-bit of y-coord). */
     private static ECPoint decompressKey(BigInteger xBN, boolean yBit) {
-        // This code is adapted from Bouncy Castle ECCurve.Fp.decodePoint(), but it wasn't easily re-used.
-        ECCurve.Fp curve = (ECCurve.Fp) ecParams.getCurve();
-        ECFieldElement x = new ECFieldElement.Fp(curve.getQ(), xBN);
-        ECFieldElement alpha = x.multiply(x.square().add(curve.getA())).add(curve.getB());
-        ECFieldElement beta = alpha.sqrt();
-        // If we can't find a sqrt we haven't got a point on the curve - invalid inputs.
-        if (beta == null)
-            throw new IllegalArgumentException("Invalid point compression");
-        if (beta.toBigInteger().testBit(0) == yBit) {
-            return new ECPoint.Fp(curve, x, beta, true);
-        } else {
-            ECFieldElement.Fp y = new ECFieldElement.Fp(curve.getQ(), curve.getQ().subtract(beta.toBigInteger()));
-            return new ECPoint.Fp(curve, x, y, true);
-        }
+        X9IntegerConverter x9 = new X9IntegerConverter();
+        byte[] compEnc = x9.integerToBytes(xBN, 1 + x9.getByteLength(CURVE.getCurve()));
+        compEnc[0] = (byte)(yBit ? 0x03 : 0x02);
+        return CURVE.getCurve().decodePoint(compEnc);
     }
 
     /**
-     * Returns a 32 byte array containing the private key.
+     * Returns a 32 byte array containing the private key, or null if the key is encrypted or public only
      */
+    @Nullable
     public byte[] getPrivKeyBytes() {
         return Utils.bigIntegerToBytes(priv, 32);
     }
-    
+
     /**
      * Exports the private key in the form used by the Satoshi client "dumpprivkey" and "importprivkey" commands. Use
      * the {@link com.google.fastcoin.core.DumpedPrivateKey#toString()} method to get the string.
      *
      * @param params The network this key is intended for use on.
      * @return Private key bytes as a {@link DumpedPrivateKey}.
+     * @throws IllegalStateException if the private key is not available.
      */
     public DumpedPrivateKey getPrivateKeyEncoded(NetworkParameters params) {
-        return new DumpedPrivateKey(params, getPrivKeyBytes(), isCompressed());
+        final byte[] privKeyBytes = getPrivKeyBytes();
+        checkState(privKeyBytes != null, "Private key is not available");
+        return new DumpedPrivateKey(params, privKeyBytes, isCompressed());
     }
 
     /**
@@ -718,7 +835,9 @@ public class ECKey implements Serializable {
      */
     public ECKey encrypt(KeyCrypter keyCrypter, KeyParameter aesKey) throws KeyCrypterException {
         Preconditions.checkNotNull(keyCrypter);
-        EncryptedPrivateKey encryptedPrivateKey = keyCrypter.encrypt(getPrivKeyBytes(), aesKey);
+        final byte[] privKeyBytes = getPrivKeyBytes();
+        checkState(privKeyBytes != null, "Private key is not available");
+        EncryptedPrivateKey encryptedPrivateKey = keyCrypter.encrypt(privKeyBytes, aesKey);
         return new ECKey(encryptedPrivateKey, getPubKey(), keyCrypter);
     }
 
@@ -802,6 +921,7 @@ public class ECKey implements Serializable {
      * @return The encryptedPrivateKey (containing the encrypted private key bytes and initialisation vector) for this ECKey,
      *         or null if the ECKey is not encrypted.
      */
+    @Nullable
     public EncryptedPrivateKey getEncryptedPrivateKey() {
         if (encryptedPrivateKey == null) {
             return null;
