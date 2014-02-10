@@ -250,11 +250,11 @@ public class MySQLFullPrunedBlockStore implements FullPrunedBlockStore {
         try {
             // Set up the genesis block. When we start out fresh, it is by
             // definition the top of the chain.
-            StoredBlock storedGenesisHeader = new StoredBlock(params.genesisBlock.cloneAsHeader(), params.genesisBlock.getWork(), 0);
+            StoredBlock storedGenesisHeader = new StoredBlock(params.getGenesisBlock().cloneAsHeader(), params.getGenesisBlock().getWork(), 0);
             // The coinbase in the genesis block is not spendable. This is because of how the reference client inits
             // its database - the genesis transaction isn't actually in the db so its spent flags can never be updated.
             List<Transaction> genesisTransactions = Lists.newLinkedList();
-            StoredUndoableBlock storedGenesis = new StoredUndoableBlock(params.genesisBlock.getHash(), genesisTransactions);
+            StoredUndoableBlock storedGenesis = new StoredUndoableBlock(params.getGenesisBlock().getHash(), genesisTransactions);
             put(storedGenesisHeader, storedGenesis);
             setChainHead(storedGenesisHeader);
             setVerifiedChainHead(storedGenesisHeader);
@@ -369,7 +369,7 @@ public class MySQLFullPrunedBlockStore implements FullPrunedBlockStore {
             s.setBytes(1, hashBytes);
             s.setBytes(2, storedBlock.getChainWork().toByteArray());
             s.setInt(3, storedBlock.getHeight());
-            s.setBytes(4, storedBlock.getHeader().unsafefastcoinSerialize());
+            s.setBytes(4, storedBlock.getHeader().fastcoinSerialize());
             s.setBoolean(5, wasUndoable);
             s.executeUpdate();
             s.close();

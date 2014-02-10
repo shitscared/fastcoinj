@@ -149,7 +149,7 @@ public class MySQLBlockStore implements BlockStore {
         try {
             // Set up the genesis block. When we start out fresh, it is by
             // definition the top of the chain.
-            Block genesis = params.genesisBlock.cloneAsHeader();
+            Block genesis = params.getGenesisBlock().cloneAsHeader();
             StoredBlock storedGenesis = new StoredBlock(genesis,
                     genesis.getWork(), 0);
             this.chainHeadBlock = storedGenesis;
@@ -182,7 +182,7 @@ public class MySQLBlockStore implements BlockStore {
             s.setBytes(1, stored.getHeader().getHash().getBytes());
             s.setBytes(2, stored.getChainWork().toByteArray());
             s.setLong(3, stored.getHeight());
-            s.setBytes(4, stored.getHeader().unsafefastcoinSerialize());
+            s.setBytes(4, stored.getHeader().fastcoinSerialize());
             s.executeUpdate();
             s.close();
             startCommitter();

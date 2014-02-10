@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.google.worldcoin.params;
+package com.google.fastcoin.params;
 
 import com.google.fastcoin.core.NetworkParameters;
 import com.google.fastcoin.core.Utils;
