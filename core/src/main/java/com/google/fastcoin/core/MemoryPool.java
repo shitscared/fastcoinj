@@ -91,12 +91,14 @@ public class MemoryPool {
      */
     public MemoryPool(final int size) {
         memoryPool = new LinkedHashMap<Sha256Hash, Entry>() {
+            /*
             @Override
             protected boolean removeEldestEntry(Map.Entry<Sha256Hash, Entry> entry) {
                 // An arbitrary choice to stop the memory used by tracked transactions getting too huge in the event
                 // of some kind of DoS attack.
                 return size() > size;
             }
+            */
         };
         referenceQueue = new ReferenceQueue<Transaction>();
     }
