@@ -24,7 +24,7 @@
 
 package wallet;
 
-option java_package = "org.fastcoinj.wallet";
+option java_package = "org.bitcoinj.wallet";
 option java_outer_classname = "Protos";
 
 message PeerAddress {
@@ -52,11 +52,11 @@ message EncryptedPrivateKey {
  * transactions, and not for spending.
  */
 message Key {
-  enum Type {
-    ORIGINAL = 1;              // Unencrypted - Original bitcoin secp256k1 curve
-    ENCRYPTED_SCRYPT_AES = 2;  // Encrypted with Scrypt and AES - - Original bitcoin secp256k1 curve
-  }
-  required Type type = 1;
+    enum Type {
+        ORIGINAL = 1;              // Unencrypted - Original fastcoin secp256k1 curve
+        ENCRYPTED_SCRYPT_AES = 2;  // Encrypted with Scrypt and AES - - Original fastcoin secp256k1 curve
+    }
+    required Type type = 1;
 
   // The private EC key bytes without any ASN.1 wrapping.
   optional bytes private_key = 2;
@@ -77,11 +77,19 @@ message Key {
   optional int64 creation_timestamp = 5;
 }
 
+message Script {
+    required bytes program = 1;
+
+    // Timestamp stored as millis since epoch. Useful for skipping block bodies before this point
+    // when watching for scripts on the blockchain.
+    required int64 creation_timestamp = 2;
+}
+
 message TransactionInput {
   // Hash of the transaction this input is using.
   required bytes transaction_out_point_hash = 1;
   // Index of transaction output used by this input.
-  required int32 transaction_out_point_index = 2;
+  required uint32 transaction_out_point_index = 2;
   // Script that contains the signatures/pubkeys.
   required bytes script_bytes = 3;
   // Sequence number. Currently unused, but intended for contracts in future.
@@ -107,8 +115,8 @@ message TransactionConfidence {
   enum Type {
     UNKNOWN = 0;
     BUILDING = 1; // In best chain.  If and only if appeared_at_height is present.
-    NOT_SEEN_IN_CHAIN = 2; // Pending inclusion in best chain.
-    NOT_IN_BEST_CHAIN = 3; // In non-best chain, pending inclusion in best chain.
+    PENDING = 2; // Unconfirmed and sitting in the networks memory pools, waiting to be included in the chain.
+    NOT_IN_BEST_CHAIN = 3; // Deprecated: equivalent to PENDING.
     DEAD = 4; // Either if overriding_transaction is present or transaction is dead coinbase
   }
 
@@ -185,11 +193,27 @@ message Transaction {
   repeated TransactionInput transaction_input = 6;
   repeated TransactionOutput transaction_output = 7;
 
-  // A list of blocks in which the transaction has been observed (on any chain).
+  // A list of blocks in which the transaction has been observed (on any chain). Also, a number used to disambiguate
+  // ordering within a block.
   repeated bytes block_hash = 8;
+  repeated int32 block_relativity_offsets = 11;
 
   // Data describing where the transaction is in the chain.
   optional TransactionConfidence confidence = 9;
+
+  // For what purpose the transaction was created.
+  enum Purpose {
+    // Old wallets or the purpose genuinely is a mystery (e.g. imported from some external source).
+    UNKNOWN = 0;
+    // Created in response to a user request for payment. This is the normal case.
+    USER_PAYMENT = 1;
+    // Created automatically to move money from rotated keys.
+    KEY_ROTATION = 2;
+    // In future: de/refragmentation, privacy boosting/mixing, child-pays-for-parent fees, etc.
+  }
+  optional Purpose purpose = 10 [default = UNKNOWN];
+
+  // Next tag: 12
 }
 
 /** The parameters used in the scrypt key derivation function.
@@ -215,7 +239,7 @@ message Extension {
   required bool mandatory = 3;
 }
 
-/** A bitcoin wallet */
+/** A fastcoin wallet */
 message Wallet {
   /**
    * The encryption type of the wallet.
@@ -229,17 +253,19 @@ message Wallet {
     ENCRYPTED_SCRYPT_AES = 2;        // All keys are encrypted with a passphrase based KDF of scrypt and AES encryption
   }
 
-  required string network_identifier = 1; // the network used by this wallet
-  // org.bitcoin.production = production network (Satoshi genesis block)
-  // org.bitcoin.test = test network (Andresen genesis block)
+    required string network_identifier = 1; // the network used by this wallet
+    // org.fastcoin.production = production network (Satoshi genesis block)
+    // org.fastcoin.test = test network (Andresen genesis block)
 
   // The SHA256 hash of the head of the best chain seen by this wallet.
   optional bytes last_seen_block_hash = 2;
   // The height in the chain of the last seen block.
   optional uint32 last_seen_block_height = 12;
+  optional int64 last_seen_block_time_secs = 14;
 
   repeated Key key = 3;
   repeated Transaction transaction = 4;
+  repeated Script watched_script = 15;
 
   optional EncryptionType encryption_type = 5 [default=UNENCRYPTED];
   optional ScryptParameters encryption_parameters = 6;
@@ -257,4 +283,11 @@ message Wallet {
   optional string description = 11;
 
   // (The field number 12 is used by last_seen_block_height)
-} // end of Wallet
+
+  // UNIX time in seconds since the epoch. If set, then any keys created before this date are assumed to be no longer
+  // wanted. Money sent to them will be re-spent automatically to the first key that was created after this time. It
+  // can be used to recover a compromised wallet, or just as part of preventative defence-in-depth measures.
+  optional uint64 key_rotation_time = 13;
+
+  // Next tag: 16
+}
